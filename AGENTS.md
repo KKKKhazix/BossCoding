@@ -24,6 +24,7 @@
 - 转 Ready 前确认没有别的 PR 在排队——并行干活，串行合并。
 - CI 红了默认响应是撤销或修复，不是加新检查。
 - 发版本：改 `package.json` 版本号走 PR 合并，老板确认后 `gh workflow run publish.yml` 触发。走可信发布，不用令牌也不用验证码；本机 `npm publish` 只是应急退路。
+- 合并不等于已发布：版本号进了 main 而没人触发 publish，npm 上就一直是旧版。发包是红线不能自动，所以改版本号的 PR 正文必须写明谁来触发；`npm view bosscoding version` 是唯一真实状态。
 
 ## 知识只有三个所在
 
