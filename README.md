@@ -1,34 +1,34 @@
-# 规矩（guiju）
+# BossCoding
 
-> 不以规矩，不能成方圆。
+> 你是老板：需求你说，制度盯人。
 
-**给 AI 协作项目的开发流程地基。**一条命令，把一套经过真实项目打磨的工程规矩装进你的新项目：规则文件、机器守卫、云端质检、决策档案、开工流程。之后你只管对 AI 说需求——它会按规矩干活，并且边干边用大白话教你每一步在做什么。
+**给 AI 协作项目的开发流程地基。**一条命令，把一套经过真实项目打磨的公司制度装进你的新项目：规则文件、机器守卫、云端质检、决策档案、交付流程。之后你只做老板该做的事——说需求、做决策；写码、自检、提交、过检，全由你雇的 AI 按制度完成，并且边干边用大白话向你汇报每一步在做什么。
 
-不挑工具：Codex、Claude Code、Kimi Code、Qwen Code、Cursor、GitHub Copilot、Trae、CodeBuddy、通义灵码、Gemini CLI、iFlow 读到的是同一份规矩。
+不挑你雇哪家：Codex、Claude Code、Kimi Code、Qwen Code、Cursor、GitHub Copilot、Trae、CodeBuddy、通义灵码、Gemini CLI、iFlow 读到的是同一份制度。
 
 ## 三步开始（不需要会写代码）
 
 ```bash
-npx guiju init
+npx bosscoding init
 ```
 
 ```bash
 npm install
 ```
 
-然后对你的 AI 说：**「读一遍 AGENTS.md，然后我们开工。」**
+然后对你的 AI 说：**「读一遍 AGENTS.md。之后需求我说，规矩你守。」**
 
 ## 装了什么
 
 | 文件 | 是什么 |
 |---|---|
-| `AGENTS.md` | 店规：AI 的行为规则真身。含**导师模式**（AI 必须用比喻和大白话向你解释一切）、干活流程、红线清单 |
-| `CLAUDE.md` | 给 Claude Code 的门牌，一行导入指向店规——规则永远只有一份 |
-| `npx guiju check` | 8 项守卫：密钥不进代码、.env 必须被忽略、脚本可执行位、规则单一真身、规则不膨胀、文档无死链、决策记录五节齐全、无裸待办。违反就红 |
-| `.github/workflows/guiju.yml` | 质检口：每次改动申请（PR）自动跑守卫＋你的测试，不过检不进主干 |
+| `AGENTS.md` | 规则文件：AI 的行为规则真身。含**导师模式**（AI 必须用比喻和大白话向你解释一切）、干活流程、红线清单 |
+| `CLAUDE.md` | 给 Claude Code 的门牌，一行导入指向规则文件——规则永远只有一份 |
+| `npx boss check` | 8 项守卫：密钥不进代码、.env 必须被忽略、脚本可执行位、规则单一真身、规则不膨胀、文档无死链、决策记录五节齐全、无裸待办。违反就红 |
+| `.github/workflows/bosscoding.yml` | 质检口：每次改动申请（PR）自动跑守卫＋你的测试，不过检不进主干 |
 | `docs/decisions/` | 决策档案室：「当初为什么这么定」只追加、不修改 |
 | `.agents/skills/` 与 `.claude/skills/` | 开工技能：教 AI 按「分支 → 自检 → Draft PR → 排队 → 合并」的次序交付 |
-| `.gemini/` 与 `.iflow/` | 两行配置，让 Gemini CLI 与 iFlow 也认同一份店规 |
+| `.gemini/` 与 `.iflow/` | 两行配置，让 Gemini CLI 与 iFlow 也认同一份规则文件 |
 
 ## 它的三条设计原则
 
@@ -38,11 +38,11 @@ npm install
 
 ## 更新机制
 
-守卫与工具的逻辑住在 `guiju` 包里，你的项目只有一行版本引用。维护者发布改进后，你的项目**下次跑 CI 时自动用上**——版本化、留痕、可回退。你的 `AGENTS.md` 是你的店产，任何更新都不会远程改写它；`npx guiju update` 只刷新框架管理的文件（CI／决策模板／技能）。
+守卫与工具的逻辑住在 `bosscoding` 包里，你的项目只有一行版本引用。维护者发布改进后，你的项目**下次跑 CI 时自动用上**——版本化、留痕、可回退。你的 `AGENTS.md` 是老板的规则，任何更新都不会远程改写它；`npx boss update` 只刷新框架管理的文件（CI／决策模板／技能）。
 
 ## 维护者须知
 
-- 运行时零第三方依赖（只用 Node 标准库），`node --test` 跑单测，`node bin/guiju.mjs check` 自检。
+- 运行时零第三方依赖（只用 Node 标准库），`node --test` 跑单测，`node bin/bosscoding.mjs check` 自检。
 - 结构：`bin/`（命令入口）、`lib/guards/`（8 项守卫）、`lib/commands/`（init／check／update）、`templates/`（写进用户项目的全部资产）。
 - 立法与发布纪律见 [AGENTS.md](AGENTS.md)；范围与形态的裁决理由见 [docs/decisions/2026-07-26-v1-scope.md](docs/decisions/2026-07-26-v1-scope.md)。
 

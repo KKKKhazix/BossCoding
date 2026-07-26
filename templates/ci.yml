@@ -1,5 +1,5 @@
-# guiju 质检口（由 guiju 管理：`npx guiju update` 会刷新本文件，自定义步骤请放独立的 workflow 文件）
-name: guiju
+# BossCoding 质检口（由 BossCoding 管理：`npx boss update` 会刷新本文件，自定义步骤请放独立的 workflow 文件）
+name: bosscoding
 
 on:
   pull_request:
@@ -28,7 +28,7 @@ jobs:
         run: |
           if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
       - name: 守卫
-        run: npx guiju check
+        run: npx boss check
       - name: 代码检查（项目配置了才跑）
         run: npm run lint --if-present
       - name: 测试（项目配置了才跑）

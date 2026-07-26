@@ -3,6 +3,6 @@
 「当初为什么这么定」只住在这里。只追加、不修改——历史不会变，所以不会腐烂。
 
 - 文件名：`YYYY-MM-DD-短横线主题.md`（日期取裁决当天）。
-- 格式：五节缺一不可，机器会查（`npx guiju check` 里的 decision-format 守卫）。
+- 格式：五节缺一不可，机器会查（`npx boss check` 里的 decision-format 守卫）。
 - 开新篇：复制 [_template.md](_template.md)。
 - 旧篇目定稿后不改。裁决变了？另开新篇，在新篇里链接旧篇。

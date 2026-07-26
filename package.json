@@ -1,7 +1,7 @@
 {
-  "name": "guiju",
+  "name": "bosscoding",
   "version": "0.1.0",
-  "description": "规矩：给 AI 协作项目的开发流程地基。一条命令装好规则文件、守卫、质检口与决策档案，任何 coding agent 通吃。",
+  "description": "BossCoding：你是老板——需求你说，制度盯人。一条命令给 AI 协作项目装好规则文件、守卫、质检口与决策档案，任何 coding agent 通吃。",
   "keywords": [
     "agent",
     "claude-code",
@@ -9,13 +9,15 @@
     "agents-md",
     "workflow",
     "guardrails",
-    "ai-coding"
+    "ai-coding",
+    "vibe-coding"
   ],
   "license": "MIT",
   "author": "Khazix",
   "type": "module",
   "bin": {
-    "guiju": "bin/guiju.mjs"
+    "bosscoding": "bin/bosscoding.mjs",
+    "boss": "bin/bosscoding.mjs"
   },
   "files": [
     "bin",
@@ -29,6 +31,6 @@
   },
   "scripts": {
     "test": "node --test",
-    "preflight": "node --test && node bin/guiju.mjs check"
+    "preflight": "node --test && node bin/bosscoding.mjs check"
   }
 }

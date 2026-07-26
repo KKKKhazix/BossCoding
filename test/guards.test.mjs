@@ -25,7 +25,7 @@ import noBareTodo from "../lib/guards/no-bare-todo.mjs";
 
 /** 造一个临时 git 仓库，写入 files 并 git add，返回守卫上下文。 */
 function makeRepo(files = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "guiju-test-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-test-"));
   execFileSync("git", ["init", "-b", "main"], { cwd: dir, stdio: "ignore" });
   for (const [rel, content] of Object.entries(files)) {
     const abs = path.join(dir, rel);
@@ -75,11 +75,11 @@ test("secrets：.env.example 与占位符放行", () => {
   assert.equal(secrets.run(ctx).length, 0);
 });
 
-test("secrets：guiju-allow-secret 注释放行", () => {
+test("secrets：boss-allow-secret 注释放行", () => {
   const token = ["ghp", "_"].join("") + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
   const ctx = makeRepo({
     ...CLEAN_BASE,
-    "fixture.js": `const sample = "${token}"; // 测试样本 guiju-allow-secret\n`,
+    "fixture.js": `const sample = "${token}"; // 测试样本 boss-allow-secret\n`,
   });
   assert.equal(secrets.run(ctx).length, 0);
 });

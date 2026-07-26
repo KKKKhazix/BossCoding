@@ -27,4 +27,4 @@ jobs:
       - name: 单测
         run: node --test
       - name: 守卫（自检）
-        run: node bin/guiju.mjs check
+        run: node bin/bosscoding.mjs check
