@@ -1,0 +1,34 @@
+{
+  "name": "guiju",
+  "version": "0.1.0",
+  "description": "规矩：给 AI 协作项目的开发流程地基。一条命令装好规则文件、守卫、质检口与决策档案，任何 coding agent 通吃。",
+  "keywords": [
+    "agent",
+    "claude-code",
+    "codex",
+    "agents-md",
+    "workflow",
+    "guardrails",
+    "ai-coding"
+  ],
+  "license": "MIT",
+  "author": "Khazix",
+  "type": "module",
+  "bin": {
+    "guiju": "bin/guiju.mjs"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "templates",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.17.0"
+  },
+  "scripts": {
+    "test": "node --test",
+    "preflight": "node --test && node bin/guiju.mjs check"
+  }
+}
