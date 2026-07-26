@@ -1,0 +1,34 @@
+# 发布流水线：可信发布（Trusted Publishing，OIDC）——不用令牌、不用验证码。
+#
+# 身份来自 GitHub 与 npm 之间的一次性握手，世上不存在「拿到就能冒充发包」的长期密钥。
+# npm 侧需一次性登记信任关系（包设置 → Trusted Publisher → GitHub Actions），
+# 其中 workflow 文件名必须精确等于 publish.yml——改本文件名就要同步改那边的登记。
+#
+# 只能手动触发：发包是红线，须老板确认后才由人或 agent 显式触发
+# （`gh workflow run publish.yml`）。版本号不在这里改，走 PR 改 package.json。
+name: publish
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # OIDC 身份令牌，可信发布的全部依据；缺这一行会退回要令牌的老路
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest # 可信发布只认 GitHub 托管的机器，自建机器不适用
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22 # 可信发布要求 Node ≥ 22.14
+      - name: 升级 npm 到支持可信发布的版本
+        # Node 22 自带的 npm 低于 11.5.1，不升级会以「缺少令牌」失败。
+        run: npm install -g npm@latest
+      - name: 出厂检验
+        # 发布是不可撤销的（npm 不允许重发同一版本号），所以守卫与测试必须在发货前跑。
+        run: npm run preflight
+      - name: 发布
+        run: npm publish
