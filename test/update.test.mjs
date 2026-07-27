@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runUpdate } from "../lib/commands/update.mjs";
+import { DEFAULT_PREFLIGHT } from "../lib/preflight.mjs";
 
 const CLI = fileURLToPath(new URL("../bin/bosscoding.mjs", import.meta.url));
 const TEMPLATES = fileURLToPath(new URL("../templates/", import.meta.url));
@@ -117,10 +118,9 @@ test("update：latest CLI 升级 package.json 与锁定版本，再刷新管理�
   );
   assert.equal(captured.result, 0);
   assert.equal(calls, 1);
-  assert.equal(
-    JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")).devDependencies.bosscoding,
-    "^9.9.9",
-  );
+  const updatedPackage = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+  assert.equal(updatedPackage.devDependencies.bosscoding, "^9.9.9");
+  assert.equal(updatedPackage.scripts.preflight, DEFAULT_PREFLIGHT);
   assert.equal(
     JSON.parse(fs.readFileSync(path.join(dir, "package-lock.json"), "utf8"))
       .packages["node_modules/bosscoding"].version,

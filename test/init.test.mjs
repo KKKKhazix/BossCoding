@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 
 import { runInit, packageNameFrom, refuseReason } from "../lib/commands/init.mjs";
 import { runCheck } from "../lib/commands/check.mjs";
+import { DEFAULT_PREFLIGHT } from "../lib/preflight.mjs";
 
 const CLI = fileURLToPath(new URL("../bin/bosscoding.mjs", import.meta.url));
 
@@ -69,7 +70,7 @@ test("init：空目录一次装齐全部资产", () => {
   }
 
   const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
-  assert.equal(pkg.scripts.preflight, "boss check");
+  assert.equal(pkg.scripts.preflight, DEFAULT_PREFLIGHT);
   assert.equal(pkg.scripts.test, "node --test");
   assert.ok(pkg.devDependencies.bosscoding);
 
@@ -135,6 +136,28 @@ test("init 后 git add，守卫全绿（完整开司旅程）", () => {
   } finally {
     unmute();
   }
+});
+
+test("init：preflight 会真实运行产品测试，失败时绝不会只报守卫绿", () => {
+  const dir = tmpProject();
+  const unmute = muteConsole();
+  try {
+    assert.equal(runInit(dir), 0);
+  } finally {
+    unmute();
+  }
+  const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+  pkg.scripts.test = 'node -e "console.error(\'产品测试失败证据\'); process.exit(23)"';
+  fs.writeFileSync(path.join(dir, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
+
+  const result = spawnSync("npm", ["run", "preflight"], {
+    cwd: dir,
+    encoding: "utf8",
+    env: { ...process.env, NO_COLOR: "1" },
+  });
+  const output = `${result.stdout}${result.stderr}`;
+  assert.notEqual(result.status, 0);
+  assert.match(output, /产品测试失败证据/);
 });
 
 test("init：中文文件夹名生成合法包名，不是一串连字符", () => {
@@ -271,5 +294,23 @@ test("init：已有 package.json 只注入不重写", () => {
   assert.equal(pkg.version, "2.0.0");
   assert.equal(pkg.scripts.dev, "vite");
   assert.equal(pkg.scripts.test, "node --test");
-  assert.equal(pkg.scripts.preflight, "boss check");
+  assert.equal(pkg.scripts.preflight, DEFAULT_PREFLIGHT);
+});
+
+test("init：已有自定义 preflight 保留原检查，并补齐产品测试与 BossCoding", () => {
+  const dir = tmpProject();
+  fs.writeFileSync(
+    path.join(dir, "package.json"),
+    '{"name":"existing","private":true,"scripts":{"test":"node --test","preflight":"npm run lint","lint":"node -e \\"process.exit(0)\\""}}\n',
+  );
+  const unmute = muteConsole();
+  try {
+    assert.equal(runInit(dir), 0);
+  } finally {
+    unmute();
+  }
+
+  const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+  assert.equal(pkg.scripts["preflight:project"], "npm run lint");
+  assert.equal(pkg.scripts.preflight, "npm run preflight:project && npm test && boss check");
 });

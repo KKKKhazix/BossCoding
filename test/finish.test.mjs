@@ -29,6 +29,15 @@ function repo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-finish-"));
   git(dir, "init", "-q", "-b", "main");
   fs.writeFileSync(path.join(dir, "seed.txt"), "seed\n");
+  fs.writeFileSync(
+    path.join(dir, "package.json"),
+    '{"name":"finish-test","private":true,"scripts":{"test":"node --test","preflight":"npm test && boss check"}}\n',
+  );
+  fs.mkdirSync(path.join(dir, "test"), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "test", "smoke.test.mjs"),
+    'import assert from "node:assert/strict";\nassert.equal(1, 1);\n',
+  );
   git(dir, "add", "-A");
   git(dir, "commit", "-qm", "init");
   return dir;
@@ -101,7 +110,9 @@ test("本地收尾：任务工作区跑自检，快进主干，不删除；重�
     const expected = git(target, "rev-parse", "HEAD");
     const controlled = controllableRunner();
 
-    const first = await capture(() => runFinish(target, { runner: controlled.runner }));
+    const first = await capture(() =>
+      runFinish(target, { runner: controlled.runner, checkRunner: () => 0 }),
+    );
     assert.equal(first.result, 0);
     assert.equal(git(dir, "rev-parse", "main"), expected);
     assert.ok(fs.existsSync(target), "finish 不得删除任务工作区");
@@ -110,15 +121,17 @@ test("本地收尾：任务工作区跑自检，快进主干，不删除；重�
       controlled.calls.some(
         (call) =>
           call.command === "npm" &&
-          call.args.join(" ") === "run preflight" &&
+          call.args.join(" ") === "test" &&
           fs.realpathSync(call.cwd) === fs.realpathSync(target),
       ),
-      "preflight 必须在任务工作区运行",
+      "产品测试必须在任务工作区运行",
     );
     assert.deepEqual(mergedTaskWorktrees(dir).map((entry) => entry.branch), ["lane/交付"]);
 
     const beforeRepeat = git(dir, "rev-parse", "main");
-    const repeated = await capture(() => runFinish(target, { runner: controlled.runner }));
+    const repeated = await capture(() =>
+      runFinish(target, { runner: controlled.runner, checkRunner: () => 0 }),
+    );
     assert.equal(repeated.result, 0);
     assert.match(repeated.output, /已经在 main/);
     assert.equal(git(dir, "rev-parse", "main"), beforeRepeat);
@@ -157,12 +170,71 @@ test("本地收尾：任一边不干净、自检失败或自检制造新文件�
       scenario.prepare(dir, target);
       const before = git(dir, "rev-parse", "main");
       const controlled = scenario.runner();
-      const result = await capture(() => runFinish(target, { runner: controlled.runner }));
+      const result = await capture(() =>
+        runFinish(target, { runner: controlled.runner, checkRunner: () => 0 }),
+      );
       assert.equal(result.result, 1, scenario.name);
       assert.equal(git(dir, "rev-parse", "main"), before, scenario.name);
     } finally {
       removeTask(dir, target);
     }
+  }
+});
+
+test("本地收尾：真实 npm 产品测试失败时绝不合并", async () => {
+  const dir = repo();
+  const target = openTask(dir, "坏测试");
+  try {
+    fs.writeFileSync(path.join(target, "broken.test.mjs"), 'throw new Error("产品真的坏了");\n');
+    const pkg = JSON.parse(fs.readFileSync(path.join(target, "package.json"), "utf8"));
+    pkg.scripts.test = "node --test broken.test.mjs";
+    fs.writeFileSync(path.join(target, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
+    git(target, "add", "-A");
+    git(target, "commit", "-qm", "add failing product test");
+    const before = git(dir, "rev-parse", "main");
+
+    // npm 与测试进程都是真实执行，只把输出收进管道，避免嵌套 TAP 干扰本测试。
+    const quietRealRunner = (command, args, options) =>
+      execFileSync(command, args, { ...options, env: GIT_ENV, stdio: "pipe" });
+    const result = await capture(() => runFinish(target, { runner: quietRealRunner }));
+
+    assert.equal(result.result, 1);
+    assert.match(result.output, /自检没有通过/);
+    assert.equal(git(dir, "rev-parse", "main"), before);
+  } finally {
+    removeTask(dir, target);
+  }
+});
+
+test("本地收尾：preflight 里只是假装打印检查名，也跳不过独立守卫", async () => {
+  const dir = repo();
+  const target = openTask(dir, "假自检");
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(target, "package.json"), "utf8"));
+    pkg.scripts.preflight = "echo npm test && echo boss check";
+    fs.writeFileSync(path.join(target, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
+    fs.writeFileSync(path.join(target, "feature.txt"), "done\n");
+    git(target, "add", "-A");
+    git(target, "commit", "-qm", "fake preflight");
+    const before = git(dir, "rev-parse", "main");
+    const quietRealRunner = (command, args, options) =>
+      execFileSync(command, args, { ...options, env: GIT_ENV, stdio: "pipe" });
+    let checks = 0;
+
+    const result = await capture(() =>
+      runFinish(target, {
+        runner: quietRealRunner,
+        checkRunner: () => {
+          checks += 1;
+          return 1;
+        },
+      }),
+    );
+    assert.equal(result.result, 1);
+    assert.equal(checks, 1);
+    assert.equal(git(dir, "rev-parse", "main"), before);
+  } finally {
+    removeTask(dir, target);
   }
 });
 
@@ -177,7 +249,9 @@ test("本地收尾：主干与任务分叉时拒绝，不制造合并提交", as
     const before = git(dir, "rev-parse", "main");
     const controlled = controllableRunner();
 
-    const result = await capture(() => runFinish(target, { runner: controlled.runner }));
+    const result = await capture(() =>
+      runFinish(target, { runner: controlled.runner, checkRunner: () => 0 }),
+    );
     assert.equal(result.result, 1);
     assert.match(result.output, /不能直接快进合并/);
     assert.equal(git(dir, "rev-parse", "main"), before);
@@ -206,6 +280,7 @@ test("GitHub 收尾：只查队列并给下一步，不上传、不合并主干"
         runner: controlled.runner,
         queueRunner,
         queueOptions: { fetchPulls: async () => [] },
+        checkRunner: () => 0,
       }),
     );
     assert.equal(result.result, 0);
