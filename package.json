@@ -1,7 +1,7 @@
 {
   "name": "bosscoding",
-  "version": "0.4.0",
-  "description": "BossCoding：你是老板——需求你说，制度盯人。一条命令给 AI 协作项目装好规则文件、守卫、质检口与决策档案，任何 coding agent 通吃。",
+  "version": "0.5.0",
+  "description": "给不会编程的产品老板：一句话把 AI 协作规则、真实状态检查和安全收尾装进项目，Codex、Claude Code 等都能用。",
   "keywords": [
     "agent",
     "claude-code",
