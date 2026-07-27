@@ -4,13 +4,16 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { runInit, packageNameFrom, refuseReason } from "../lib/commands/init.mjs";
 import { runCheck } from "../lib/commands/check.mjs";
+
+const CLI = fileURLToPath(new URL("../bin/bosscoding.mjs", import.meta.url));
 
 function tmpProject() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-init-"));
@@ -25,6 +28,19 @@ function muteConsole() {
     console.log = original.log;
     console.error = original.error;
   };
+}
+
+function captureConsole(action) {
+  const output = [];
+  const original = { log: console.log, error: console.error };
+  console.log = (...args) => output.push(args.join(" "));
+  console.error = (...args) => output.push(args.join(" "));
+  try {
+    return { result: action(), output: output.join("\n") };
+  } finally {
+    console.log = original.log;
+    console.error = original.error;
+  }
 }
 
 test("init：空目录一次装齐全部资产", () => {
@@ -89,6 +105,26 @@ test("init：幂等——跑两次不覆盖、不重复追加", () => {
   }
 });
 
+test("init：二次运行不把自己生成的 Gemini／iFlow 配置误报为待处理", () => {
+  const dir = tmpProject();
+  const unmute = muteConsole();
+  try {
+    assert.equal(runInit(dir), 0);
+  } finally {
+    unmute();
+  }
+
+  const second = captureConsole(() => runInit(dir));
+  assert.equal(second.result, 0);
+  assert.doesNotMatch(second.output, /需要处理：/);
+  assert.doesNotMatch(second.output, /\.gemini\/settings\.json：请在其中确认/);
+  assert.doesNotMatch(second.output, /\.iflow\/settings\.json：请在其中确认/);
+  assert.match(second.output, /BossCoding 就位/);
+  assert.match(second.output, /下一步只做一件事/);
+  assert.match(second.output, /npx -y bosscoding@latest status/);
+  assert.doesNotMatch(second.output, /npx boss status/);
+});
+
 test("init 后 git add，守卫全绿（完整开司旅程）", () => {
   const dir = tmpProject();
   const unmute = muteConsole();
@@ -136,6 +172,66 @@ test("init：家目录与桌面这类「东西堆」一律拒绝开工，且不�
     unmute();
   }
   assert.equal(fs.existsSync(path.join(os.homedir(), "AGENTS.md")), false, "家目录里不该出现规则文件");
+});
+
+test("init：普通非空杂物目录拒绝开工，已有 Git 或源码的项目仍可安装", () => {
+  const clutter = tmpProject();
+  fs.writeFileSync(path.join(clutter, "家庭照片.jpg"), "not really a photo");
+  const refused = captureConsole(() => runInit(clutter));
+  assert.equal(refused.result, 1);
+  assert.match(refused.output, /看不出这是一个产品项目/);
+  assert.equal(fs.existsSync(path.join(clutter, ".git")), false);
+  assert.equal(fs.existsSync(path.join(clutter, "package.json")), false);
+
+  const gitProject = tmpProject();
+  fs.writeFileSync(path.join(gitProject, "产品想法.pdf"), "notes");
+  execFileSync("git", ["init", "-b", "main"], { cwd: gitProject, stdio: "ignore" });
+  const gitUnmute = muteConsole();
+  try {
+    assert.equal(runInit(gitProject), 0);
+  } finally {
+    gitUnmute();
+  }
+  assert.ok(fs.existsSync(path.join(gitProject, "AGENTS.md")));
+
+  const sourceProject = tmpProject();
+  fs.writeFileSync(path.join(sourceProject, "main.py"), "print('hello')\n");
+  const sourceUnmute = muteConsole();
+  try {
+    assert.equal(runInit(sourceProject), 0);
+  } finally {
+    sourceUnmute();
+  }
+  assert.ok(fs.existsSync(path.join(sourceProject, "AGENTS.md")));
+});
+
+test("init：没有 Git 时用人话失败，不显示程序堆栈", () => {
+  const dir = tmpProject();
+  const child = spawnSync(process.execPath, [CLI, "init"], {
+    cwd: dir,
+    env: { ...process.env, PATH: "" },
+    encoding: "utf8",
+  });
+  const output = `${child.stdout}${child.stderr}`;
+  assert.equal(child.status, 1);
+  assert.match(output, /还没有 Git/);
+  assert.match(output, /把这句话交给 AI/);
+  assert.doesNotMatch(output, /spawnSync|node:child_process|\n\s+at /);
+  assert.equal(fs.readdirSync(dir).length, 0);
+});
+
+test("init：已有非 BossCoding AGENTS.md 时保护原文，并给 AI 可直接执行的合并提示", () => {
+  const dir = tmpProject();
+  const rules = "# 我的项目规则\n\n所有按钮都要有中文说明。\n";
+  fs.writeFileSync(path.join(dir, "AGENTS.md"), rules);
+
+  const captured = captureConsole(() => runInit(dir));
+  assert.equal(captured.result, 0);
+  assert.equal(fs.readFileSync(path.join(dir, "AGENTS.md"), "utf8"), rules);
+  assert.doesNotMatch(captured.output, /BossCoding 就位。你是老板/);
+  assert.match(captured.output, /暂不能宣布完全就位/);
+  assert.match(captured.output, /请把这整句话交给 AI/);
+  assert.match(captured.output, /保留 AGENTS\.md 里的全部现有规则/);
 });
 
 test("init：已有 package.json 只注入不重写", () => {
