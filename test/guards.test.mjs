@@ -258,3 +258,19 @@ test("no-bare-todo：决策档案室不扫", () => {
   });
   assert.equal(noBareTodo.run(ctx).length, 0);
 });
+
+// ---- rules-budget：单行上限（issue #11 的症状检查） ----
+
+test("rules-budget：超长单行只提醒不硬拦", () => {
+  const long = `- ${"很长的一条规则".repeat(80)}`;
+  const ctx = makeRepo({ ...CLEAN_BASE, "AGENTS.md": `# 项目规则\n\n${long}\n` });
+  const problems = rulesBudget.run(ctx);
+  assert.equal(problems.length, 1);
+  assert.equal(problems[0].level, "warn");
+  assert.equal(problems[0].line, 3);
+});
+
+test("rules-budget：正常长度的行不出声", () => {
+  const ctx = makeRepo({ ...CLEAN_BASE, "AGENTS.md": "# 项目规则\n\n- 一条正常的规则。\n" });
+  assert.deepEqual(rulesBudget.run(ctx), []);
+});
