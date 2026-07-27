@@ -1,6 +1,6 @@
 {
   "name": "bosscoding",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "BossCoding：你是老板——需求你说，制度盯人。一条命令给 AI 协作项目装好规则文件、守卫、质检口与决策档案，任何 coding agent 通吃。",
   "keywords": [
     "agent",

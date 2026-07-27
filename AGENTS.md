@@ -1,6 +1,6 @@
 # BossCoding 项目规则
 
-给 AI 协作项目的开发流程地基：`npx bosscoding init` 一条命令装好规则文件、8 项守卫、CI 质检口、决策档案与技能，任何 coding agent 通吃。纯 Node ESM，运行时零第三方依赖。
+给 AI 协作项目的开发流程地基：`npx bosscoding init` 一条命令装好规则文件、守卫、CI 质检口、决策档案与技能，任何 coding agent 通吃（守卫数量是会变的状态，跑 `node bin/bosscoding.mjs check` 看）。纯 Node ESM，运行时零第三方依赖。
 包 https://www.npmjs.com/package/bosscoding ｜ 仓库 https://github.com/KKKKhazix/BossCoding （公开，MIT）
 线上是哪个版本跑 `npm view bosscoding version` 看——版本号是会变的状态，不写死在本文件里。
 
