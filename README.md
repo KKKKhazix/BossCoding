@@ -24,12 +24,13 @@ npm install
 |---|---|
 | `AGENTS.md` | 规则文件：AI 的行为规则真身。含**导师模式**（AI 必须用比喻和大白话向你解释一切）、干活流程、红线清单 |
 | `CLAUDE.md` | 给 Claude Code 的门牌，一行导入指向规则文件——规则永远只有一份 |
-| `npx boss check` | 8 项守卫：密钥不进代码、.env 必须被忽略、脚本可执行位、规则单一真身、规则不膨胀、文档无死链、决策记录五节齐全、无裸待办。违反就红 |
+| `npx boss check` | 9 项守卫：密钥不进代码、.env 必须被忽略、脚本可执行位、规则单一真身、规则不膨胀、文档无死链、决策记录五节齐全、无裸待办、CI 配置不踩已知的坑。违反就红 |
 | `.github/workflows/bosscoding.yml` | 质检口：每次改动申请（PR）自动跑守卫＋你的测试，不过检不进主干 |
 | `docs/decisions/` | 决策档案室：「当初为什么这么定」只追加、不修改 |
 | 两个 git hook | 主工作区只跑主干：多个 AI 并行时，谁在主工作区开分支干活就当场拦下。**只有你真的开了独立工作区才启用**，单人单工作区的项目里它一声不吭 |
 | `.agents/skills/` 与 `.claude/skills/` | 开工技能：教 AI 按「分支 → 自检 → Draft PR → 排队 → 合并」的次序交付 |
 | `.gemini/` 与 `.iflow/` | 两行配置，让 Gemini CLI 与 iFlow 也认同一份规则文件 |
+| `npx boss merge` | 排队判定：多个 AI 并行时，问一句「现在轮到我合并了吗」。答案由 PR 号定，不由谁先问定 |
 
 ## 它的三条设计原则
 
@@ -41,10 +42,12 @@ npm install
 
 守卫与工具的逻辑住在 `bosscoding` 包里，你的项目只有一行版本引用。维护者发布改进后，你的项目**下次跑 CI 时自动用上**——版本化、留痕、可回退。你的 `AGENTS.md` 是老板的规则，任何更新都不会远程改写它；`npx boss update` 只刷新框架管理的文件（CI／决策模板／技能／git hook）。git hook 不进版本库，所以把仓库重新 clone 一份之后，跑一次 `npx boss update` 把它补回来。
 
+自动用上新版本有个代价：新加的检查会让你昨天还绿的仓库今天变红，而你什么都没改。所以**新检查进场时只提醒不拦**（输出里是黄色的 △），跑满一个版本、看清误报率之后，才在下一版转成硬拦。你有一个版本的时间从容处理。
+
 ## 维护者须知
 
 - 运行时零第三方依赖（只用 Node 标准库），`node --test` 跑单测，`node bin/bosscoding.mjs check` 自检。
-- 结构：`bin/`（命令入口）、`lib/guards/`（8 项守卫）、`lib/commands/`（init／check／update）、`lib/hooks.mjs`（git hook 安装）、`templates/`（写进用户项目的全部资产）。
+- 结构：`bin/`（命令入口）、`lib/guards/`（9 项守卫）、`lib/commands/`（init／check／update／merge）、`lib/hooks.mjs`（git hook 安装）、`templates/`（写进用户项目的全部资产）。
 - 立法与发布纪律见 [AGENTS.md](AGENTS.md)；范围与形态的裁决理由见 [docs/decisions/2026-07-26-v1-scope.md](docs/decisions/2026-07-26-v1-scope.md)。
 
 ## 许可
