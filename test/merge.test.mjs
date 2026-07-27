@@ -127,6 +127,30 @@ test("本地阶段：还没连远端 → 放行（0）且不联网；不是 git 
   }
 });
 
+test("远端不在 GitHub（Gitee 等）：说明情况并放行，不拿红叉挡住单干的人", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-merge-gitee-"));
+  execFileSync("git", ["init", "-b", "main"], { cwd: dir, stdio: "ignore" });
+  execFileSync("git", ["remote", "add", "origin", "https://gitee.com/someone/myapp.git"], {
+    cwd: dir,
+    stdio: "ignore",
+  });
+
+  const original = { log: console.log, error: console.error, env: process.env.GITHUB_REPOSITORY };
+  console.log = () => {};
+  console.error = () => {};
+  delete process.env.GITHUB_REPOSITORY;
+  try {
+    const fetchPulls = async () => {
+      throw new Error("非 GitHub 远端不该发起请求");
+    };
+    assert.equal(await runMerge(dir, { fetchPulls, now: NOW }), 0);
+  } finally {
+    console.log = original.log;
+    console.error = original.error;
+    if (original.env !== undefined) process.env.GITHUB_REPOSITORY = original.env;
+  }
+});
+
 test("origin 指向镜像或代理时，靠 GITHUB_REPOSITORY 认身份", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-merge-env-"));
   execFileSync("git", ["init", "-b", "lane/b"], { cwd: dir, stdio: "ignore" });
@@ -143,7 +167,9 @@ test("origin 指向镜像或代理时，靠 GITHUB_REPOSITORY 认身份", async 
     process.env.GITHUB_REPOSITORY = "o/r";
     assert.equal(await runMerge(dir, { fetchPulls, now: NOW }), 0);
     delete process.env.GITHUB_REPOSITORY;
-    assert.equal(await runMerge(dir, { fetchPulls, now: NOW }), 1); // 认不出仓库就明说，不蒙
+    // 没有那个环境变量就认不出身份：说明情况并把判断交回给人（0），不再拿红叉挡路。
+    // 关键是绝不蒙着查——下面这个 fetchPulls 一旦被调用就会抛错，测试即失败。
+    assert.equal(await runMerge(dir, { fetchPulls, now: NOW }), 0);
   } finally {
     console.log = original.log;
     console.error = original.error;

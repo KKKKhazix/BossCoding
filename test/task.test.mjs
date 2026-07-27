@@ -10,7 +10,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { runTask, sanitizeTaskName } from "../lib/commands/task.mjs";
+import { runTask, sanitizeTaskName, mergedTaskWorktrees } from "../lib/commands/task.mjs";
 
 const GIT_ENV = {
   ...process.env,
@@ -88,6 +88,37 @@ test("防呆：缺任务名、任务名清洗后为空、分支重名、目录�
     unmute();
     if (target && fs.existsSync(target)) {
       execFileSync("git", ["worktree", "remove", "--force", target], { cwd: dir, env: GIT_ENV, stdio: "pipe" });
+    }
+  }
+});
+
+test("回收：已经合并进主干的任务工作区会被认出来，没合并的不动", () => {
+  const dir = repo();
+  const unmute = mute();
+  const opened = [];
+  try {
+    runTask(dir, "已完成", { installDeps: false });
+    runTask(dir, "进行中", { installDeps: false });
+    opened.push(
+      path.join(path.dirname(dir), `${path.basename(dir)}-已完成`),
+      path.join(path.dirname(dir), `${path.basename(dir)}-进行中`),
+    );
+
+    // 「已完成」这条合并回主干；「进行中」留一笔没合并的提交。
+    git(dir, "merge", "-q", "lane/已完成");
+    fs.writeFileSync(path.join(opened[1], "wip.txt"), "wip\n");
+    git(opened[1], "add", "-A");
+    git(opened[1], "commit", "-qm", "wip");
+
+    const stale = mergedTaskWorktrees(dir);
+    assert.equal(stale.length, 1);
+    assert.equal(stale[0].branch, "lane/已完成");
+  } finally {
+    unmute();
+    for (const t of opened) {
+      if (fs.existsSync(t)) {
+        execFileSync("git", ["worktree", "remove", "--force", t], { cwd: dir, env: GIT_ENV, stdio: "pipe" });
+      }
     }
   }
 });
