@@ -12,6 +12,7 @@ import path from "node:path";
 
 import { probe, runStatus } from "../lib/commands/status.mjs";
 import { runInit } from "../lib/commands/init.mjs";
+import { runTask } from "../lib/commands/task.mjs";
 
 const GIT_ENV = {
   ...process.env,
@@ -74,50 +75,83 @@ test("探测：远端已配置、GitHub 身份、当前提交已上传是三件�
   assert.equal(arbitrary.remoteConfigured, true);
   assert.equal(arbitrary.githubRemote, false);
   assert.equal(arbitrary.currentCommitUploaded, false);
+  assert.equal(arbitrary.originDisplay, "本地地址（已隐藏）");
   assert.equal(arbitrary.rung, 0);
+  assert.doesNotMatch(capture(() => runStatus(dir)).output, /\/tmp\/not-a-github-repository/);
 
-  git(dir, "remote", "set-url", "origin", "https://github.com/o/r.git");
+  git(
+    dir,
+    "remote",
+    "set-url",
+    "origin",
+    "https://oauth2:top-secret@github.com/o/r.git?token=query-secret#hash-secret",
+  );
   const configured = probe(dir);
   assert.equal(configured.remoteConfigured, true);
   assert.equal(configured.githubRemote, true);
   assert.equal(configured.currentCommitUploaded, false);
+  assert.equal(configured.originDisplay, "https://github.com/o/r");
   assert.equal(configured.rung, 0);
 
   // remote-tracking ref 只会在成功 push／fetch 后出现；这里离线造同样的 Git 事实。
   git(dir, "update-ref", "refs/remotes/origin/main", "HEAD");
   const uploaded = probe(dir);
   assert.equal(uploaded.currentCommitUploaded, true);
+  assert.equal(uploaded.currentContentBackedUp, true);
   assert.equal(uploaded.rung, 1);
+
+  fs.writeFileSync(path.join(dir, "unsaved.txt"), "not committed\n");
+  const dirty = probe(dir);
+  assert.equal(dirty.currentCommitUploaded, true);
+  assert.equal(dirty.currentContentBackedUp, false);
+  assert.equal(dirty.unsavedChanges, true);
+  const shown = capture(() => runStatus(dir)).output;
+  assert.match(shown, /另有未保存改动，这部分没有异地备份/);
+  assert.doesNotMatch(shown, /top-secret|query-secret|hash-secret|\/tmp\/not-a-github/);
 });
 
-test("探测：规则、三个门禁、真实依赖、项目简介与最小产品测试逐项看事实", () => {
+test("探测：规则、官方门禁、四份技能、可解析依赖与测试入口逐项看事实", () => {
   const dir = project();
   const before = probe(dir);
   assert.equal(before.intro, "placeholder");
   assert.equal(before.depsInstalled, false);
   assert.equal(before.dependenciesRequired, true);
   assert.equal(before.hasPackageJson, true);
+  assert.equal(before.packageJsonValid, true);
   assert.equal(before.rulesReady, true);
   assert.equal(before.hooksReady, true);
-  assert.equal(before.hasProductTest, false);
+  assert.equal(before.skillsReady, true);
+  assert.equal(before.testEntryConfigured, false);
 
   const agents = fs.readFileSync(path.join(dir, "AGENTS.md"), "utf8");
   fs.writeFileSync(
     path.join(dir, "AGENTS.md"),
     agents.replace(/（本项目做什么[\s\S]*?）/, "给自己用的记账小工具，跑在本地。"),
   );
-  fs.mkdirSync(path.join(dir, "node_modules", "bosscoding"), { recursive: true });
+  const dependencyDir = path.join(dir, "node_modules", "bosscoding");
+  fs.mkdirSync(dependencyDir, { recursive: true });
+  assert.equal(probe(dir).depsInstalled, false, "空目录不能冒充依赖已安装");
+  fs.writeFileSync(path.join(dependencyDir, "package.json"), "{broken");
+  assert.equal(probe(dir).depsInstalled, false, "损坏的依赖 package.json 不能冒充已安装");
+  fs.writeFileSync(path.join(dependencyDir, "package.json"), '{"name":"bosscoding","version":"0.5.0"}\n');
+
   fs.mkdirSync(path.join(dir, "test"), { recursive: true });
   fs.writeFileSync(path.join(dir, "test", "smoke.test.mjs"), "/* 最小产品测试 */\n");
+  const commentOnly = probe(dir);
+  assert.equal(commentOnly.testEntryConfigured, false, "默认 node --test 的空测试不能亮绿");
+  fs.writeFileSync(
+    path.join(dir, "test", "smoke.test.mjs"),
+    'import assert from "node:assert/strict";\nassert.equal(1, 1);\n',
+  );
   const after = probe(dir);
   assert.equal(after.intro, "filled");
   assert.equal(after.depsInstalled, true);
-  assert.equal(after.hasProductTest, true);
+  assert.equal(after.testEntryConfigured, true);
 
-  // 同名文件不是门禁：必须带 BossCoding 标记，且在 POSIX 上能被 Git 执行。
+  // marker 仍在但内容过期也不是当前门禁。
   const prePush = path.join(dir, ".git", "hooks", "pre-push");
   const originalHook = fs.readFileSync(prePush, "utf8");
-  fs.writeFileSync(prePush, "#!/bin/sh\nexit 0\n");
+  fs.writeFileSync(prePush, `${originalHook}\n# 旧版残留\n`);
   assert.equal(probe(dir).hooksReady, false);
   assert.deepEqual(probe(dir).missingHooks, ["pre-push"]);
   if (process.platform !== "win32") {
@@ -126,6 +160,26 @@ test("探测：规则、三个门禁、真实依赖、项目简介与最小产�
     assert.equal(probe(dir).hooksReady, false);
     assert.deepEqual(probe(dir).missingHooks, ["pre-push"]);
   }
+
+  fs.writeFileSync(prePush, originalHook);
+  fs.chmodSync(prePush, 0o755);
+  const skill = path.join(dir, ".agents", "skills", "boss-flow", "SKILL.md");
+  fs.appendFileSync(skill, "\n旧版残留\n");
+  const staleSkill = probe(dir);
+  assert.equal(staleSkill.skillsReady, false);
+  assert.deepEqual(staleSkill.missingSkills, [".agents/skills/boss-flow/SKILL.md"]);
+
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-global-hooks-"));
+  for (const name of ["pre-commit", "post-checkout", "pre-push"]) {
+    const source = path.join(dir, ".git", "hooks", name);
+    const target = path.join(outside, name);
+    fs.copyFileSync(source, target);
+    fs.chmodSync(target, 0o755);
+  }
+  git(dir, "config", "core.hooksPath", outside);
+  const externalHooks = probe(dir);
+  assert.equal(externalHooks.hooksReady, false, "项目外的全局 hook 不能冒充本项目门禁");
+  assert.deepEqual(externalHooks.missingHooks.sort(), ["post-checkout", "pre-commit", "pre-push"]);
 });
 
 test("没有声明任何依赖时，不因 node_modules 不存在而要求安装", () => {
@@ -134,6 +188,33 @@ test("没有声明任何依赖时，不因 node_modules 不存在而要求安装
   const state = probe(dir);
   assert.equal(state.dependenciesRequired, false);
   assert.equal(state.depsInstalled, true);
+});
+
+test("package.json 无法解析时，依赖与测试入口都不能亮绿", () => {
+  const dir = project();
+  fs.writeFileSync(path.join(dir, "package.json"), "{broken");
+  const state = probe(dir);
+  assert.equal(state.packageJsonValid, false);
+  assert.equal(state.depsInstalled, false);
+  assert.equal(state.testEntryConfigured, false);
+});
+
+test("自定义测试命令只声明入口，不冒充已验证结果", () => {
+  const dir = project();
+  const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+  pkg.scripts.test = "vitest run";
+  fs.writeFileSync(path.join(dir, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
+  assert.equal(probe(dir).testEntryConfigured, true);
+
+  for (const noop of ["echo ok", "printf ok", "true", ":", "exit 0", 'node -e "process.exit(0)"']) {
+    pkg.scripts.test = noop;
+    fs.writeFileSync(path.join(dir, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
+    assert.equal(probe(dir).testEntryConfigured, false, noop);
+  }
+
+  pkg.scripts.test = "echo preparing && vitest run";
+  fs.writeFileSync(path.join(dir, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
+  assert.equal(probe(dir).testEntryConfigured, true);
 });
 
 test("手工合并过的自定义规则：三块核心标题齐全就视为 BossCoding 已就绪", () => {
@@ -156,6 +237,86 @@ test("缺本地门禁时，下一步只让 AI 用最新版全名恢复", () => {
   assert.match(next, /npx -y bosscoding@latest update/);
   assert.doesNotMatch(next, /npm install|提交一下|带我连上 GitHub/);
   assert.equal(output.match(/对 AI 说/g)?.length, 1, "缺门禁时不应同时派发第二个动作");
+});
+
+test("任务尚未产出或有未保存改动时，下一步不跳去连接 GitHub", () => {
+  const dir = project();
+  commitAll(dir);
+  const unmute = mute();
+  let target;
+  try {
+    assert.equal(runTask(dir, "尚未产出", { installDeps: false }), 0);
+    target = path.join(path.dirname(dir), `${path.basename(dir)}-尚未产出`);
+  } finally {
+    unmute();
+  }
+
+  try {
+    const clean = capture(() => runStatus(target)).output.split("下一步：")[1];
+    assert.match(clean, /当前任务还没有产出/);
+    assert.doesNotMatch(clean, /连上 GitHub/);
+
+    fs.writeFileSync(path.join(target, "wip.txt"), "working\n");
+    const dirty = capture(() => runStatus(target)).output.split("下一步：")[1];
+    assert.match(dirty, /妥善保存当前未提交改动/);
+    assert.doesNotMatch(dirty, /连上 GitHub/);
+  } finally {
+    if (target && fs.existsSync(target)) {
+      execFileSync("git", ["worktree", "remove", "--force", target], {
+        cwd: dir,
+        env: GIT_ENV,
+        stdio: "pipe",
+      });
+    }
+  }
+});
+
+test("已合并且保留的工作区不算进行中，也不把回收变成老板唯一下一步", () => {
+  const dir = project();
+  const agents = fs.readFileSync(path.join(dir, "AGENTS.md"), "utf8");
+  fs.writeFileSync(
+    path.join(dir, "AGENTS.md"),
+    agents.replace(/（本项目做什么[\s\S]*?）/, "给自己用的记账小工具，跑在本地。"),
+  );
+  fs.mkdirSync(path.join(dir, "node_modules", "bosscoding"), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "node_modules", "bosscoding", "package.json"),
+    '{"name":"bosscoding","version":"0.5.0"}\n',
+  );
+  fs.mkdirSync(path.join(dir, "test"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "test", "smoke.test.mjs"), "process.exitCode = 0;\n");
+  commitAll(dir);
+
+  const unmute = mute();
+  let target;
+  try {
+    assert.equal(runTask(dir, "已合并保留", { installDeps: false }), 0);
+    target = path.join(path.dirname(dir), `${path.basename(dir)}-已合并保留`);
+  } finally {
+    unmute();
+  }
+
+  try {
+    fs.writeFileSync(path.join(target, "done.txt"), "done\n");
+    git(target, "add", "-A");
+    git(target, "commit", "-qm", "done");
+    git(dir, "merge", "--ff-only", "lane/已合并保留");
+
+    const output = capture(() => runStatus(dir)).output;
+    assert.match(output, /已保留：1 个任务工作区已经合并/);
+    assert.doesNotMatch(output, /进行中的任务/);
+    const next = output.split("下一步：")[1];
+    assert.match(next, /继续说下一个产品需求/);
+    assert.doesNotMatch(next, /回收/);
+  } finally {
+    if (target && fs.existsSync(target)) {
+      execFileSync("git", ["worktree", "remove", "--force", target], {
+        cwd: dir,
+        env: GIT_ENV,
+        stdio: "pipe",
+      });
+    }
+  }
 });
 
 test("只读：跑一次 status 不产生任何文件变化", () => {

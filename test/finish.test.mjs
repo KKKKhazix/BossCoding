@@ -11,6 +11,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { runFinish } from "../lib/commands/finish.mjs";
+import { runInit } from "../lib/commands/init.mjs";
 import { mergedTaskWorktrees, runTask } from "../lib/commands/task.mjs";
 
 const GIT_ENV = {
@@ -33,6 +34,27 @@ function repo() {
     path.join(dir, "package.json"),
     '{"name":"finish-test","private":true,"scripts":{"test":"node --test","preflight":"npm test && boss check"}}\n',
   );
+  fs.mkdirSync(path.join(dir, "test"), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "test", "smoke.test.mjs"),
+    'import assert from "node:assert/strict";\nassert.equal(1, 1);\n',
+  );
+  git(dir, "add", "-A");
+  git(dir, "commit", "-qm", "init");
+  return dir;
+}
+
+function initializedRepo() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-finish-first-"));
+  const original = { log: console.log, error: console.error };
+  console.log = () => {};
+  console.error = () => {};
+  try {
+    assert.equal(runInit(dir), 0);
+  } finally {
+    console.log = original.log;
+    console.error = original.error;
+  }
   fs.mkdirSync(path.join(dir, "test"), { recursive: true });
   fs.writeFileSync(
     path.join(dir, "test", "smoke.test.mjs"),
@@ -102,6 +124,24 @@ function removeTask(dir, target) {
   }
 }
 
+test("本地首项任务：唯一工作区从 lane 安全切回并快进 main，真实测试与守卫都执行", async () => {
+  const dir = initializedRepo();
+  git(dir, "checkout", "-q", "-b", "lane/first");
+  fs.writeFileSync(path.join(dir, "first.txt"), "first task\n");
+  git(dir, "add", "-A");
+  git(dir, "commit", "-qm", "first task");
+  const expected = git(dir, "rev-parse", "HEAD");
+  const quietRealRunner = (command, args, options) =>
+    execFileSync(command, args, { ...options, env: GIT_ENV, stdio: "pipe" });
+
+  const result = await capture(() => runFinish(dir, { runner: quietRealRunner }));
+  assert.equal(result.result, 0);
+  assert.equal(git(dir, "rev-parse", "--abbrev-ref", "HEAD"), "main");
+  assert.equal(git(dir, "rev-parse", "main"), expected);
+  assert.equal(git(dir, "rev-parse", "lane/first"), expected, "任务分支必须保留");
+  assert.equal(git(dir, "worktree", "list", "--porcelain").match(/^worktree /gm)?.length, 1);
+});
+
 test("本地收尾：任务工作区跑自检，快进主干，不删除；重复运行仍成功且主干不变", async () => {
   const dir = repo();
   const target = openTask(dir);
@@ -135,6 +175,29 @@ test("本地收尾：任务工作区跑自检，快进主干，不删除；重�
     assert.equal(repeated.result, 0);
     assert.match(repeated.output, /已经在 main/);
     assert.equal(git(dir, "rev-parse", "main"), beforeRepeat);
+  } finally {
+    removeTask(dir, target);
+  }
+});
+
+test("本地收尾：echo ok 等空测试入口不能亮绿或合并", async () => {
+  const dir = repo();
+  const target = openTask(dir, "空测试");
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(target, "package.json"), "utf8"));
+    pkg.scripts.test = "echo ok";
+    fs.writeFileSync(path.join(target, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
+    fs.writeFileSync(path.join(target, "feature.txt"), "done\n");
+    git(target, "add", "-A");
+    git(target, "commit", "-qm", "fake test");
+    const before = git(dir, "rev-parse", "main");
+
+    const result = await capture(() =>
+      runFinish(target, { runner: controllableRunner().runner, checkRunner: () => 0 }),
+    );
+    assert.equal(result.result, 1);
+    assert.match(result.output, /还没有可执行的产品最小测试/);
+    assert.equal(git(dir, "rev-parse", "main"), before);
   } finally {
     removeTask(dir, target);
   }
