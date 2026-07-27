@@ -53,6 +53,17 @@ test("非 workflow 的 yml 不扫（不是所有 yaml 都是 GitHub Actions）",
   assert.deepEqual(ciKnownTraps.run(ctx), []);
 });
 
+test("项目声明安装 BossCoding 却缺官方质检文件时必须提醒", () => {
+  const ctx = makeRepo({
+    "package.json": '{"devDependencies":{"bosscoding":"^0.5.0"}}\n',
+  });
+  const problems = ciKnownTraps.run(ctx);
+  assert.equal(problems.length, 1);
+  assert.equal(problems[0].file, ".github/workflows/bosscoding.yml");
+  assert.equal(problems[0].level, "warn");
+  assert.match(problems[0].msg, /不会自动检查/);
+});
+
 // ---- 坑一：可选步骤没有上限 ----
 
 test("抓：continue-on-error 的步骤没有 timeout", () => {

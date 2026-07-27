@@ -38,6 +38,20 @@ test("CLI：init --help 只显示帮助，绝不把当前目录变成项目", ()
   assert.deepEqual(fs.readdirSync(dir), []);
 });
 
+test("CLI：拼错参数直接失败，绝不按忽略参数后的命令执行", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-cli-typo-"));
+  const result = spawnSync(process.execPath, [CLI, "init", "--hepl"], {
+    cwd: dir,
+    encoding: "utf8",
+    env: GIT_ENV,
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /不认识的参数：--hepl/);
+  assert.match(result.stderr, /没有执行任何操作/);
+  assert.deepEqual(fs.readdirSync(dir), []);
+});
+
 test("CLI：多词任务名不会只剩第一个词", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-cli-task-"));
   git(dir, "init", "-q", "-b", "main");

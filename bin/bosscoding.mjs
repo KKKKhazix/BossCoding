@@ -52,6 +52,23 @@ async function main() {
     return 0;
   }
 
+  // 修改型命令不许默默吞掉拼错的参数；`init --hepl` 曾因此真的往目录里写文件。
+  const noArgs = new Set(["init", "check", "status", "finish"]);
+  let badArgs = false;
+  if (noArgs.has(cmd)) badArgs = args.length > 0;
+  if (cmd === "update") badArgs = args.length > 1 || (args.length === 1 && args[0] !== "--refresh-only");
+  if (cmd === "merge") {
+    badArgs =
+      args.length !== 0 &&
+      !(args.length === 2 && args[0] === "--pr" && Number.isInteger(Number(args[1])) && Number(args[1]) > 0);
+  }
+  if (cmd === "task") badArgs = args.some((arg) => arg.startsWith("--"));
+  if (badArgs) {
+    console.error(`✗ 命令「${cmd}」后面有不认识的参数：${args.join(" ")}`);
+    console.error(`  先运行 npx bosscoding ${cmd} --help 查看正确用法；本次没有执行任何操作。`);
+    return 1;
+  }
+
   if (cmd === "init") {
     const { runInit } = await import("../lib/commands/init.mjs");
     return runInit();
