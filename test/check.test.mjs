@@ -46,13 +46,13 @@ test("check：失败时给老板一句可直接交给 AI 的话", () => {
   assert.match(result.output, /npx bosscoding check/);
 });
 
-test("check：在仓库子目录运行时拒绝假装检查了整个项目", () => {
+test("check：在仓库子目录运行时自动检查完整项目，不拼接局部事实", () => {
   const dir = initializedProject();
   const nested = path.join(dir, "src");
   fs.mkdirSync(nested);
-  const result = capture(() => runCheck(nested));
+  const root = capture(() => runCheck(dir));
+  const nestedResult = capture(() => runCheck(nested));
 
-  assert.equal(result.code, 1);
-  assert.match(result.output, /子文件夹/);
-  assert.match(result.output, /最顶层目录/);
+  assert.equal(nestedResult.code, 0);
+  assert.equal(nestedResult.output, root.output);
 });
