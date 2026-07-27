@@ -234,6 +234,18 @@ test("init：已有非 BossCoding AGENTS.md 时保护原文，并给 AI 可直�
   assert.match(captured.output, /保留 AGENTS\.md 里的全部现有规则/);
 });
 
+test("init：手工合并过核心规则的自定义 AGENTS 不会被反复催合并", () => {
+  const dir = tmpProject();
+  const rules =
+    "# 我的项目规则\n\n## 导师模式\n大白话。\n\n## 干活流程\n先检查。\n\n## 红线\n先确认。\n";
+  fs.writeFileSync(path.join(dir, "AGENTS.md"), rules);
+
+  const captured = captureConsole(() => runInit(dir));
+  assert.equal(captured.result, 0);
+  assert.equal(fs.readFileSync(path.join(dir, "AGENTS.md"), "utf8"), rules);
+  assert.doesNotMatch(captured.output, /暂不能宣布完全就位|保留 AGENTS\.md 里的全部现有规则/);
+});
+
 test("init：已有 package.json 只注入不重写", () => {
   const dir = tmpProject();
   fs.writeFileSync(

@@ -213,6 +213,18 @@ test("rules-single-source：手工合并过三块核心规则的存量项目通�
   assert.equal(rulesSingleSource.run(ctx).length, 0);
 });
 
+test("rules-single-source：只剩简介标记、干活流程与红线已丢失，仍然必须红", () => {
+  const ctx = makeRepo({
+    ...CLEAN_BASE,
+    "package.json": '{"devDependencies":{"bosscoding":"^0.5.0"}}\n',
+    "AGENTS.md":
+      "# 项目规则\n\n<!-- bosscoding:intro-start -->\n产品简介\n<!-- bosscoding:intro-end -->\n",
+  });
+  const problems = rulesSingleSource.run(ctx);
+  assert.equal(problems.length, 1);
+  assert.match(problems[0].msg, /核心规则/);
+});
+
 // ---- rules-budget ----
 
 test("rules-budget：正常体积通过", () => {
