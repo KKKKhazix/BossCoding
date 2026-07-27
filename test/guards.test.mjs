@@ -194,6 +194,25 @@ test("rules-single-source：缺 AGENTS.md 必须红", () => {
   assert.equal(problems[0].file, "AGENTS.md");
 });
 
+test("rules-single-source：只装了包、却因已有普通 AGENTS 跳过核心规则，必须红", () => {
+  const ctx = makeRepo({
+    ...CLEAN_BASE,
+    "package.json": '{"devDependencies":{"bosscoding":"^0.4.0"}}\n',
+  });
+  const problems = rulesSingleSource.run(ctx);
+  assert.equal(problems.length, 1);
+  assert.match(problems[0].msg, /核心规则/);
+});
+
+test("rules-single-source：手工合并过三块核心规则的存量项目通过", () => {
+  const ctx = makeRepo({
+    ...CLEAN_BASE,
+    "package.json": '{"devDependencies":{"bosscoding":"^0.4.0"}}\n',
+    "AGENTS.md": "# 自定义项目规则\n\n## 导师模式\nx\n\n## 干活流程\nx\n\n## 红线\nx\n",
+  });
+  assert.equal(rulesSingleSource.run(ctx).length, 0);
+});
+
 // ---- rules-budget ----
 
 test("rules-budget：正常体积通过", () => {
