@@ -10,7 +10,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { probe, runStatus } from "../lib/commands/status.mjs";
+import { probe, runStatus, verifyRemoteUpload } from "../lib/commands/status.mjs";
 import { runInit } from "../lib/commands/init.mjs";
 import { runTask } from "../lib/commands/task.mjs";
 
@@ -65,7 +65,7 @@ function commitAll(dir) {
   git(dir, "commit", "-qm", "init");
 }
 
-test("探测：远端已配置、GitHub 身份、当前提交已上传是三件不同的事实", () => {
+test("探测：远端已配置、本机旧记录、当前远端确认是三件不同的事实", () => {
   const dir = project();
   assert.equal(probe(dir).rung, 0);
   commitAll(dir);
@@ -86,28 +86,50 @@ test("探测：远端已配置、GitHub 身份、当前提交已上传是三件�
     "origin",
     "https://oauth2:top-secret@github.com/o/r.git?token=query-secret#hash-secret",
   );
-  const configured = probe(dir);
+  const configured = probe(dir, { remoteVerifier: () => "missing" });
   assert.equal(configured.remoteConfigured, true);
   assert.equal(configured.githubRemote, true);
   assert.equal(configured.currentCommitUploaded, false);
   assert.equal(configured.originDisplay, "https://github.com/o/r");
   assert.equal(configured.rung, 0);
 
-  // remote-tracking ref 只会在成功 push／fetch 后出现；这里离线造同样的 Git 事实。
+  // 旧 remote-tracking ref 只能证明本机曾记录过；origin 换成空仓库后不能借尸还魂。
   git(dir, "update-ref", "refs/remotes/origin/main", "HEAD");
-  const uploaded = probe(dir);
+  const staleRecord = probe(dir, { remoteVerifier: () => "missing" });
+  assert.equal(staleRecord.localUploadRecord, true);
+  assert.equal(staleRecord.currentCommitUploaded, false);
+  assert.equal(staleRecord.rung, 0);
+
+  const uploaded = probe(dir, { remoteVerifier: () => "verified" });
   assert.equal(uploaded.currentCommitUploaded, true);
   assert.equal(uploaded.currentContentBackedUp, true);
   assert.equal(uploaded.rung, 1);
 
   fs.writeFileSync(path.join(dir, "unsaved.txt"), "not committed\n");
-  const dirty = probe(dir);
+  const dirty = probe(dir, { remoteVerifier: () => "verified" });
   assert.equal(dirty.currentCommitUploaded, true);
   assert.equal(dirty.currentContentBackedUp, false);
   assert.equal(dirty.unsavedChanges, true);
-  const shown = capture(() => runStatus(dir)).output;
+  const shown = capture(() => runStatus(dir, { remoteVerifier: () => "verified" })).output;
   assert.match(shown, /另有未保存改动，这部分没有异地备份/);
   assert.doesNotMatch(shown, /top-secret|query-secret|hash-secret|\/tmp\/not-a-github/);
+});
+
+test("远端实时证据：只在当前提交确实存在于此刻的 origin 时亮绿", () => {
+  const dir = project();
+  commitAll(dir);
+  const bare = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-status-remote-"));
+  git(bare, "init", "--bare", "-q");
+  git(dir, "remote", "add", "origin", bare);
+  git(dir, "push", "-q", "origin", "main");
+
+  const first = git(dir, "rev-parse", "HEAD");
+  assert.equal(verifyRemoteUpload(dir, first), "verified");
+
+  fs.writeFileSync(path.join(dir, "local-only.txt"), "not uploaded\n");
+  git(dir, "add", "-A");
+  git(dir, "commit", "-qm", "local only");
+  assert.equal(verifyRemoteUpload(dir, git(dir, "rev-parse", "HEAD")), "missing");
 });
 
 test("探测：规则、官方门禁、四份技能、可解析依赖与测试入口逐项看事实", () => {
@@ -268,6 +290,101 @@ test("任务尚未产出或有未保存改动时，下一步不跳去连接 GitH
         stdio: "pipe",
       });
     }
+  }
+});
+
+test("任务已有提交但还没收尾时，下一步必须先验收和 finish", () => {
+  const dir = project();
+  const agents = fs.readFileSync(path.join(dir, "AGENTS.md"), "utf8");
+  fs.writeFileSync(
+    path.join(dir, "AGENTS.md"),
+    agents.replace(/（本项目做什么[\s\S]*?）/, "给自己用的记账小工具，跑在本地。"),
+  );
+  fs.mkdirSync(path.join(dir, "node_modules", "bosscoding"), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "node_modules", "bosscoding", "package.json"),
+    '{"name":"bosscoding","version":"0.5.0"}\n',
+  );
+  fs.mkdirSync(path.join(dir, "test"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "test", "smoke.test.mjs"), "process.exitCode = 0;\n");
+  commitAll(dir);
+
+  const unmute = mute();
+  let target;
+  try {
+    assert.equal(runTask(dir, "等待验收", { installDeps: false }), 0);
+    target = path.join(path.dirname(dir), `${path.basename(dir)}-等待验收`);
+  } finally {
+    unmute();
+  }
+
+  try {
+    fs.mkdirSync(path.join(target, "node_modules", "bosscoding"), { recursive: true });
+    fs.writeFileSync(
+      path.join(target, "node_modules", "bosscoding", "package.json"),
+      '{"name":"bosscoding","version":"0.5.0"}\n',
+    );
+    fs.writeFileSync(path.join(target, "done.txt"), "done\n");
+    git(target, "add", "-A");
+    git(target, "commit", "-qm", "done");
+    const next = capture(() => runStatus(target)).output.split("下一步：")[1];
+    assert.match(next, /打开给我验收/);
+    assert.match(next, /BossCoding 收尾/);
+    assert.doesNotMatch(next, /连上 GitHub/);
+  } finally {
+    if (target && fs.existsSync(target)) {
+      execFileSync("git", ["worktree", "remove", "--force", target], {
+        cwd: dir,
+        env: GIT_ENV,
+        stdio: "pipe",
+      });
+    }
+  }
+});
+
+test("从仓库子目录运行 status，所有事实统一取项目最外层", () => {
+  const dir = project();
+  const nested = path.join(dir, "src", "feature");
+  fs.mkdirSync(nested, { recursive: true });
+
+  const rootState = probe(dir);
+  const nestedState = probe(nested);
+  assert.equal(nestedState.abs, fs.realpathSync(dir));
+  for (const key of [
+    "rulesReady",
+    "hooksReady",
+    "skillsReady",
+    "packageJsonValid",
+    "depsInstalled",
+    "testEntryConfigured",
+    "branch",
+  ]) {
+    assert.equal(nestedState[key], rootState[key], key);
+  }
+});
+
+test("文件夹已丢失的任务登记不冒充进行中，并优先提示找回", () => {
+  const dir = project();
+  commitAll(dir);
+  const unmute = mute();
+  let target;
+  try {
+    assert.equal(runTask(dir, "文件夹丢失", { installDeps: false }), 0);
+    target = path.join(path.dirname(dir), `${path.basename(dir)}-文件夹丢失`);
+  } finally {
+    unmute();
+  }
+
+  fs.rmSync(target, { recursive: true, force: true });
+  try {
+    const output = capture(() => runStatus(dir)).output;
+    assert.match(output, /工作区登记异常：1 条任务的文件夹已不在原位置/);
+    assert.doesNotMatch(output, /进行中的任务：1 条/);
+    const next = output.split("下一步：")[1];
+    assert.match(next, /是否被移动、能否从备份找回/);
+    assert.doesNotMatch(next, /连上 GitHub/);
+  } finally {
+    git(dir, "worktree", "prune", "--expire", "now");
   }
 });
 
