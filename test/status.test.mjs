@@ -385,6 +385,39 @@ test("任务已有提交但还没收尾时，下一步必须先验收和 finish"
   }
 });
 
+test("Codex 默认 codex/ 分支也被识别为待收尾任务", () => {
+  const dir = project();
+  const agents = fs.readFileSync(path.join(dir, "AGENTS.md"), "utf8");
+  fs.writeFileSync(
+    path.join(dir, "AGENTS.md"),
+    agents.replace(/（本项目做什么[\s\S]*?）/, "给自己用的三件事小工具，跑在本地。"),
+  );
+  fs.mkdirSync(path.join(dir, "node_modules", "bosscoding"), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "node_modules", "bosscoding", "package.json"),
+    '{"name":"bosscoding","version":"0.5.0"}\n',
+  );
+  fs.mkdirSync(path.join(dir, "test"), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "test", "smoke.test.mjs"),
+    'import assert from "node:assert/strict";\nassert.equal(1, 1);\n',
+  );
+  commitAll(dir);
+
+  git(dir, "checkout", "-q", "-b", "codex/首个产品");
+  fs.writeFileSync(path.join(dir, "done.txt"), "done\n");
+  git(dir, "add", "-A");
+  git(dir, "commit", "-qm", "done");
+
+  const state = probe(dir);
+  assert.equal(state.taskBranch, true);
+  assert.equal(state.taskHasCommittedChanges, true);
+  const next = capture(() => runStatus(dir)).output.split("下一步：")[1];
+  assert.match(next, /打开给我验收/);
+  assert.match(next, /BossCoding 收尾/);
+  assert.doesNotMatch(next, /连上 GitHub/);
+});
+
 test("从仓库子目录运行 status，所有事实统一取项目最外层", () => {
   const dir = project();
   const nested = path.join(dir, "src", "feature");
