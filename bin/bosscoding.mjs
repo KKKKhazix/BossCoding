@@ -1,36 +1,42 @@
 #!/usr/bin/env node
 /**
- * BossCoding 命令入口。六个命令，没有更多：
+ * BossCoding 命令入口。七个命令，没有更多：
  *   init    开司筹备：把流程地基装进当前项目（幂等，不覆盖已有内容）
  *   status  我在四阶梯的哪一阶、下一步该干什么（只读）
- *   check   跑守卫：9 项机器检查，任一红即非零退出
+ *   check   跑守卫：任一机器检查标红即非零退出
  *   task    开并行任务：独立工作区＋分支，一条命令（只建不删）
+ *   finish  验收后收尾：自检并把任务安全并回主干
  *   update  刷新框架管理的文件（老板的规则永不被碰）
  *   merge   排队判定：现在轮不轮得到我合并（只读，不替你合）
  *
- * 命令名有两个：安装场景必须用全名 `npx bosscoding`（项目外裸跑短名会解析到
- * npm 上别人的同名包）；装进项目后日常用短名 `npx boss`（本地命令优先）。
+ * 用户可复制的命令只写唯一全名 `bosscoding`；短名与 npm 上的第三方包重名，
+ * 依赖没装好时可能执行错包，所以只保留为旧项目兼容入口，不再展示。
  */
 
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const HELP = `BossCoding——你是老板：需求你说，制度盯人。
+const HELP = `BossCoding——你是老板：需求你说，AI 干活，制度验收。
 
 用法：
-  npx bosscoding init      开司筹备：装好规则文件、守卫、质检口、决策档案与技能
-  npx boss status          我现在在哪一阶、下一步该干什么（只读，看不懂就先跑它）
-  npx boss check           跑 9 项守卫（npm run preflight 的内核；装完后短名即可）
-  npx boss task <任务名>   开一条并行任务：独立工作区＋分支，把新文件夹拖给一个新的 AI 会话
-  npx boss update          刷新框架管理的文件（CI／决策模板／技能／git hook；你的规则永不被碰）
-  npx boss merge           问一句「现在轮到我合并了吗」（只读，不替你转 Ready 也不替你合）
+  npx -y bosscoding@latest init      第一次使用：给当前产品装好协作地基
+  npx bosscoding status              看真实进度，以及此刻唯一的下一步
+  npx bosscoding check               检查协作地基有没有明显风险
+  npx bosscoding task <任务名>       给一项新需求开独立工作区
+  npx bosscoding finish              验收后自检，并把当前任务安全并回主干
+  npx -y bosscoding@latest update    升级 BossCoding，再刷新它管理的文件
+  npx bosscoding merge               只问「现在轮到这项任务合并了吗」
 
-装完后对你的 AI 说：「读一遍 AGENTS.md。之后需求我说，规矩你守。」
+你不必记命令。装好后只需对 AI 说：
+「读一遍 AGENTS.md。之后我说需求，你负责做到能让我直接验收。」
+
+始终使用全名 bosscoding，避免误执行 npm 上的同名第三方包。
 `;
 
 async function main() {
   const cmd = process.argv[2];
+  const args = process.argv.slice(3);
 
   if (cmd === "--version" || cmd === "-v") {
     const pkg = JSON.parse(
@@ -38,6 +44,29 @@ async function main() {
     );
     console.log(pkg.version);
     return 0;
+  }
+
+  // 帮助必须永远只读。此前 `init --help` 会真的安装文件，是小白最危险的反直觉入口。
+  if (args.includes("--help") || args.includes("-h")) {
+    console.log(HELP);
+    return 0;
+  }
+
+  // 修改型命令不许默默吞掉拼错的参数；`init --hepl` 曾因此真的往目录里写文件。
+  const noArgs = new Set(["init", "check", "status", "finish"]);
+  let badArgs = false;
+  if (noArgs.has(cmd)) badArgs = args.length > 0;
+  if (cmd === "update") badArgs = args.length > 1 || (args.length === 1 && args[0] !== "--refresh-only");
+  if (cmd === "merge") {
+    badArgs =
+      args.length !== 0 &&
+      !(args.length === 2 && args[0] === "--pr" && Number.isInteger(Number(args[1])) && Number(args[1]) > 0);
+  }
+  if (cmd === "task") badArgs = args.some((arg) => arg.startsWith("--"));
+  if (badArgs) {
+    console.error(`✗ 命令「${cmd}」后面有不认识的参数：${args.join(" ")}`);
+    console.error(`  先运行 npx bosscoding ${cmd} --help 查看正确用法；本次没有执行任何操作。`);
+    return 1;
   }
 
   if (cmd === "init") {
@@ -54,21 +83,34 @@ async function main() {
   }
   if (cmd === "task") {
     const { runTask } = await import("../lib/commands/task.mjs");
-    return runTask(process.cwd(), process.argv[3]);
+    return runTask(process.cwd(), args.join(" "));
+  }
+  if (cmd === "finish") {
+    const { runFinish } = await import("../lib/commands/finish.mjs");
+    return runFinish();
   }
   if (cmd === "update") {
     const { runUpdate } = await import("../lib/commands/update.mjs");
-    return runUpdate();
+    return runUpdate(process.cwd(), { refreshOnly: args.includes("--refresh-only") });
   }
   if (cmd === "merge") {
     const { runMerge } = await import("../lib/commands/merge.mjs");
-    const flag = process.argv.indexOf("--pr");
-    const prNumber = flag >= 0 ? Number(process.argv[flag + 1]) : null;
+    const flag = args.indexOf("--pr");
+    const prNumber = flag >= 0 ? Number(args[flag + 1]) : null;
     return runMerge(process.cwd(), { prNumber: Number.isFinite(prNumber) ? prNumber : null });
   }
 
+  if (cmd !== undefined && cmd !== "--help" && cmd !== "-h") {
+    console.error(`✗ 不认识命令「${cmd}」。下面是 BossCoding 真正支持的命令：\n`);
+  }
   console.log(HELP);
   return cmd === undefined || cmd === "--help" || cmd === "-h" ? 0 : 1;
 }
 
-process.exit(await main());
+try {
+  process.exit(await main());
+} catch {
+  console.error("✗ BossCoding 遇到意外问题，本次没有完成。");
+  console.error("  把这句话交给 AI：「检查当前项目状态和文件权限，找出 BossCoding 命令失败的原因，修好后重试；不要把原始报错丢给我。」");
+  process.exit(1);
+}

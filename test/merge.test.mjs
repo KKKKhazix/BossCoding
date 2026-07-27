@@ -25,6 +25,19 @@ const pr = (number, branch, extra = {}) => ({
   ...extra,
 });
 
+async function capture(run) {
+  const lines = [];
+  const original = { log: console.log, error: console.error };
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  try {
+    return { result: await run(), output: lines.join("\n") };
+  } finally {
+    console.log = original.log;
+    console.error = original.error;
+  }
+}
+
 test("解析 origin：https 与 ssh 两种写法都认", () => {
   assert.deepEqual(parseRemote("https://github.com/KKKKhazix/BossCoding.git"), {
     owner: "KKKKhazix",
@@ -35,6 +48,9 @@ test("解析 origin：https 与 ssh 两种写法都认", () => {
     repo: "BossCoding",
   });
   assert.equal(parseRemote("https://gitlab.com/a/b.git"), null);
+  assert.equal(parseRemote("https://github.com.evil.example/a/b.git"), null);
+  assert.equal(parseRemote("https://github.com@evil.example/a/b.git"), null);
+  assert.equal(parseRemote("/Users/alice/github.com/a/b.git"), null);
 });
 
 test("我是号最小的 → 轮到我", () => {
@@ -148,6 +164,42 @@ test("远端不在 GitHub（Gitee 等）：说明情况并放行，不拿红叉�
     console.log = original.log;
     console.error = original.error;
     if (original.env !== undefined) process.env.GITHUB_REPOSITORY = original.env;
+  }
+});
+
+test("非 GitHub 远端输出统一脱敏，恶意域名不触发 GitHub 请求", async () => {
+  const cases = [
+    {
+      url: "https://oauth2:top-secret@github.com.evil.example/o/r.git?token=query-secret#hash-secret",
+      forbidden: ["top-secret", "query-secret", "hash-secret"],
+    },
+    {
+      url: "/Users/alice/private/repository.git",
+      forbidden: ["/Users/alice/private"],
+    },
+  ];
+
+  const originalEnv = process.env.GITHUB_REPOSITORY;
+  delete process.env.GITHUB_REPOSITORY;
+  try {
+    for (const item of cases) {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-merge-redact-"));
+      execFileSync("git", ["init", "-q", "-b", "main"], { cwd: dir, stdio: "ignore" });
+      execFileSync("git", ["remote", "add", "origin", item.url], { cwd: dir, stdio: "ignore" });
+      const result = await capture(() =>
+        runMerge(dir, {
+          fetchPulls: async () => {
+            throw new Error("非 GitHub 远端不该请求 GitHub");
+          },
+          now: NOW,
+        }),
+      );
+      assert.equal(result.result, 0);
+      for (const secret of item.forbidden) assert.doesNotMatch(result.output, new RegExp(secret));
+    }
+  } finally {
+    if (originalEnv === undefined) delete process.env.GITHUB_REPOSITORY;
+    else process.env.GITHUB_REPOSITORY = originalEnv;
   }
 });
 

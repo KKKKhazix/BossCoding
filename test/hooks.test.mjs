@@ -7,7 +7,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -28,10 +29,10 @@ function git(cwd, ...args) {
   return execFileSync("git", args, { cwd, encoding: "utf8", env: GIT_ENV, stdio: "pipe" });
 }
 
-/** 一个有初始提交的仓库，主干叫 main。 */
-function repo() {
+/** 一个有初始提交的仓库；新项目默认 main，也可覆盖为既有项目的主干名。 */
+function repo(branch = "main") {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-hooks-"));
-  git(dir, "init", "-q", "-b", "main");
+  git(dir, "init", "-q", "-b", branch);
   fs.writeFileSync(path.join(dir, "seed.txt"), "seed\n");
   git(dir, "add", "-A");
   git(dir, "commit", "-qm", "init");
@@ -72,7 +73,7 @@ test("装：幂等——再跑一次不重复报告、不改内容", () => {
   assert.equal(fs.readFileSync(path.join(dir, ".git/hooks/pre-commit"), "utf8"), before);
 });
 
-test("装：别人的 hook 一律让路，只刷新自己写的", () => {
+test("装：别人的 hook 一律让路；仅有 BossCoding marker 也不能证明可整份覆盖", () => {
   const dir = repo();
   const mine = path.join(dir, ".git/hooks/pre-commit");
   fs.writeFileSync(mine, "#!/bin/sh\n# husky 之类的既有 hook\nexit 0\n");
@@ -80,10 +81,144 @@ test("装：别人的 hook 一律让路，只刷新自己写的", () => {
   assert.deepEqual(result.skipped, ["pre-commit"]);
   assert.match(fs.readFileSync(mine, "utf8"), /既有 hook/);
 
-  // 自己写过的那份被改旧了，则允许刷新。
+  // 只有 marker、没有安装时记录的正文哈希，可能是用户手工合并过的，必须让路。
   const checkout = path.join(dir, ".git/hooks/post-checkout");
   fs.writeFileSync(checkout, "#!/bin/sh\n# bosscoding:main-worktree-guard 旧版\nexit 0\n");
-  assert.deepEqual(installHooks(dir).refreshed, ["post-checkout"]);
+  const second = installHooks(dir);
+  assert.ok(second.skipped.includes("post-checkout"));
+  assert.match(fs.readFileSync(checkout, "utf8"), /旧版/);
+});
+
+test("装：官方 hook 后追加用户命令会失去纯官方哈希，更新时保留不覆盖", () => {
+  const dir = repo();
+  installHooks(dir);
+  const target = path.join(dir, ".git/hooks/pre-commit");
+  fs.appendFileSync(target, "\n# 用户自己的检查\nnode my-check.mjs\n");
+
+  const result = installHooks(dir);
+  assert.ok(result.skipped.includes("pre-commit"));
+  assert.equal(result.refreshed.includes("pre-commit"), false);
+  assert.match(fs.readFileSync(target, "utf8"), /node my-check\.mjs/);
+});
+
+test("装：单个 hook 或所有权清单是软链时绝不跟随写到项目外", (t) => {
+  const dir = repo();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-hook-leaf-outside-"));
+  const externalHook = path.join(outside, "pre-push");
+  try {
+    fs.symlinkSync(externalHook, path.join(dir, ".git/hooks/pre-push"));
+  } catch {
+    t.skip("当前平台不允许创建文件软链");
+    return;
+  }
+
+  const result = installHooks(dir);
+  assert.ok(result.skipped.includes("pre-push"));
+  assert.equal(fs.existsSync(externalHook), false);
+
+  const guarded = repo();
+  const externalOwnership = path.join(outside, "ownership.json");
+  fs.writeFileSync(externalOwnership, '{"user":"content"}\n');
+  fs.symlinkSync(
+    externalOwnership,
+    path.join(guarded, ".git/hooks/.bosscoding-owned-hooks.json"),
+  );
+  const blocked = installHooks(guarded);
+  assert.equal(blocked.blocked.length, 1);
+  assert.equal(fs.readFileSync(externalOwnership, "utf8"), '{"user":"content"}\n');
+  for (const name of HOOK_NAMES) {
+    assert.equal(fs.existsSync(path.join(guarded, ".git/hooks", name)), false);
+  }
+});
+
+test("升级：精确等于所有权记录的旧官方 hook 可刷新", () => {
+  const dir = repo();
+  installHooks(dir);
+  const target = path.join(dir, ".git/hooks/pre-commit");
+  const ownership = path.join(dir, ".git/hooks/.bosscoding-owned-hooks.json");
+  const legacy = fs
+    .readFileSync(target, "utf8")
+    .replace("`bosscoding update` 会刷新本文件", "`npx boss update` 会刷新本文件");
+  fs.writeFileSync(target, legacy);
+  const manifest = JSON.parse(fs.readFileSync(ownership, "utf8"));
+  manifest["pre-commit"] = createHash("sha256").update(legacy).digest("hex");
+  fs.writeFileSync(ownership, `${JSON.stringify(manifest, null, 2)}\n`);
+
+  const result = installHooks(dir);
+  assert.ok(result.refreshed.includes("pre-commit"));
+  assert.match(fs.readFileSync(target, "utf8"), /`bosscoding update`/);
+  assert.ok(fs.existsSync(ownership));
+});
+
+test("装：core.hooksPath 指到仓库外时明确阻止，绝不写共享目录", () => {
+  const dir = repo();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-global-hooks-"));
+  git(dir, "config", "core.hooksPath", outside);
+
+  const result = installHooks(dir);
+  assert.deepEqual(result.installed, []);
+  assert.equal(result.blocked.length, 1);
+  assert.match(result.blocked[0], /指向项目外|没有写入/);
+  assert.deepEqual(fs.readdirSync(outside), []);
+});
+
+test("装：仓库内 core.hooksPath 仍可使用", () => {
+  const dir = repo();
+  git(dir, "config", "core.hooksPath", ".githooks");
+
+  const result = installHooks(dir);
+  assert.deepEqual(result.blocked, []);
+  assert.deepEqual(result.installed.sort(), [...HOOK_NAMES].sort());
+  for (const name of HOOK_NAMES) {
+    assert.ok(fs.existsSync(path.join(dir, ".githooks", name)), `仓库内缺 ${name}`);
+  }
+});
+
+test("装：仓库内 hook 路径若是普通文件或断链，明确阻止而不是抛异常", (t) => {
+  const fileDir = repo();
+  fs.writeFileSync(path.join(fileDir, ".githooks"), "not a directory\n");
+  git(fileDir, "config", "core.hooksPath", ".githooks");
+  const fileResult = installHooks(fileDir);
+  assert.equal(fileResult.blocked.length, 1);
+  assert.match(fileResult.blocked[0], /不是项目内的普通文件夹|无法安全创建/);
+
+  const linkDir = repo();
+  try {
+    fs.symlinkSync(path.join(linkDir, "missing-hooks"), path.join(linkDir, ".githooks"));
+  } catch {
+    t.skip("当前平台不允许创建软链");
+    return;
+  }
+  git(linkDir, "config", "core.hooksPath", ".githooks");
+  const linkResult = installHooks(linkDir);
+  assert.equal(linkResult.blocked.length, 1);
+  assert.match(linkResult.blocked[0], /不是项目内的普通文件夹|无法安全创建/);
+});
+
+test("装：兼容旧 Git，不依赖 --path-format；路径探测失败必须明确阻止", () => {
+  const dir = repo();
+  const calls = [];
+  const compatibleRunner = (command, args, options) => {
+    calls.push(args);
+    return execFileSync(command, args, options);
+  };
+  const installed = installHooks(dir, { execFileSync: compatibleRunner });
+  assert.deepEqual(installed.blocked, []);
+  assert.equal(calls.some((args) => args.includes("--path-format=absolute")), false);
+  assert.equal(calls.some((args) => args.includes("--git-path")), true);
+
+  const failedDir = repo();
+  const blocked = installHooks(failedDir, {
+    execFileSync: () => {
+      throw new Error("old git probe failed");
+    },
+  });
+  assert.deepEqual(blocked.installed, []);
+  assert.equal(blocked.blocked.length, 1);
+  assert.match(blocked.blocked[0], /无法确认.*Git hook 路径|没有写入/);
+  for (const name of HOOK_NAMES) {
+    assert.equal(fs.existsSync(path.join(failedDir, ".git/hooks", name)), false);
+  }
 });
 
 test("拦：单工作区的项目里彻底闭嘴（框架自己教的流程不能被自己拦住）", () => {
@@ -122,6 +257,47 @@ test("拦：开了独立工作区之后，主工作区的分支提交被 git 真
   assert.ok(tryCommit(dir, "e.txt").ok, "detached HEAD 不该被拦");
 
   fs.rmSync(linked, { recursive: true, force: true });
+});
+
+test("稳定分支矩阵：失效 origin/HEAD 回退 main，trunk 与唯一 develop 也都能保护", () => {
+  const cases = [
+    { branch: "main", deadRemoteHead: true },
+    { branch: "trunk", deadRemoteHead: false },
+    { branch: "develop", deadRemoteHead: false },
+  ];
+
+  for (const scenario of cases) {
+    const dir = repo(scenario.branch);
+    if (scenario.branch === "develop") {
+      git(dir, "config", "--local", "bosscoding.stableBranch", "develop");
+    }
+    installHooks(dir);
+    if (scenario.deadRemoteHead) {
+      git(dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/missing");
+    }
+    const linked = path.join(path.dirname(dir), `${path.basename(dir)}-${scenario.branch}-lane`);
+    git(dir, "worktree", "add", "-q", linked, "-b", `lane/${scenario.branch}`);
+    try {
+      const checkout = spawnSync("git", ["checkout", "-b", `feature/${scenario.branch}`], {
+        cwd: dir,
+        encoding: "utf8",
+        env: GIT_ENV,
+      });
+      assert.equal(checkout.status, 0, checkout.stderr);
+      assert.match(`${checkout.stdout}${checkout.stderr}`, /主工作区切到了分支/);
+      const blocked = tryCommit(dir, `${scenario.branch}.txt`);
+      assert.equal(blocked.ok, false, scenario.branch);
+      assert.match(blocked.output, new RegExp(`主工作区只跑 ${scenario.branch}`));
+    } finally {
+      if (fs.existsSync(linked)) {
+        execFileSync("git", ["worktree", "remove", "--force", linked], {
+          cwd: dir,
+          env: GIT_ENV,
+          stdio: "pipe",
+        });
+      }
+    }
+  }
 });
 
 test("拦：CI 里不出声（CI 没有另一个 agent，也没人看警告）", () => {
@@ -194,6 +370,33 @@ test("直推门禁：首推放行、二推被拦、分支照推、--no-verify �
     env: { ...GIT_ENV, CI: "true" },
     stdio: "pipe",
   });
+});
+
+test("直推门禁稳定分支矩阵：失效 origin/HEAD 回退 main，trunk 与 develop 二推都拦", () => {
+  const cases = [
+    { branch: "main", deadRemoteHead: true },
+    { branch: "trunk", deadRemoteHead: false },
+    { branch: "develop", deadRemoteHead: false },
+  ];
+  for (const scenario of cases) {
+    const dir = repo(scenario.branch);
+    if (scenario.branch === "develop") {
+      git(dir, "config", "--local", "bosscoding.stableBranch", "develop");
+    }
+    installHooks(dir);
+    bareRemote(dir);
+    assert.ok(tryPush(dir, "origin", scenario.branch).ok, `${scenario.branch} 首推`);
+    if (scenario.deadRemoteHead) {
+      git(dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/missing");
+    }
+    git(dir, "branch", `feature/${scenario.branch}`);
+    fs.writeFileSync(path.join(dir, "next.txt"), "next\n");
+    git(dir, "add", "-A");
+    git(dir, "commit", "-qm", "next");
+    const blocked = tryPush(dir, "origin", scenario.branch);
+    assert.equal(blocked.ok, false, scenario.branch);
+    assert.match(blocked.output, new RegExp(`禁止直推 ${scenario.branch}`));
+  }
 });
 
 test("直推门禁：非 origin 的远端（备份镜像）不拦", () => {
