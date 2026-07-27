@@ -124,9 +124,9 @@ function removeTask(dir, target) {
   }
 }
 
-test("本地首项任务：唯一工作区从 lane 安全切回并快进 main，真实测试与守卫都执行", async () => {
+test("本地首项任务：Codex 默认分支也能安全切回并快进 main", async () => {
   const dir = initializedRepo();
-  git(dir, "checkout", "-q", "-b", "lane/first");
+  git(dir, "checkout", "-q", "-b", "codex/first");
   fs.writeFileSync(path.join(dir, "first.txt"), "first task\n");
   git(dir, "add", "-A");
   git(dir, "commit", "-qm", "first task");
@@ -138,7 +138,7 @@ test("本地首项任务：唯一工作区从 lane 安全切回并快进 main，
   assert.equal(result.result, 0);
   assert.equal(git(dir, "rev-parse", "--abbrev-ref", "HEAD"), "main");
   assert.equal(git(dir, "rev-parse", "main"), expected);
-  assert.equal(git(dir, "rev-parse", "lane/first"), expected, "任务分支必须保留");
+  assert.equal(git(dir, "rev-parse", "codex/first"), expected, "任务分支必须保留");
   assert.equal(git(dir, "worktree", "list", "--porcelain").match(/^worktree /gm)?.length, 1);
 });
 
