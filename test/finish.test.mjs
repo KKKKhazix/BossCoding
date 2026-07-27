@@ -203,6 +203,36 @@ test("本地收尾：echo ok 等空测试入口不能亮绿或合并", async () 
   }
 });
 
+test("本地收尾：自检期间出现的新提交没有受测，绝不能跟着合并", async () => {
+  const dir = repo();
+  const target = openTask(dir, "并发提交");
+  try {
+    commitTask(target);
+    const before = git(dir, "rev-parse", "main");
+    let injected = false;
+    const controlled = controllableRunner({
+      onPreflight: (cwd) => {
+        if (injected) return;
+        injected = true;
+        fs.writeFileSync(path.join(cwd, "late.txt"), "not tested\n");
+        git(cwd, "add", "-A");
+        git(cwd, "commit", "-qm", "commit during checks");
+      },
+    });
+
+    const result = await capture(() =>
+      runFinish(target, { runner: controlled.runner, checkRunner: () => 0 }),
+    );
+
+    assert.equal(result.result, 1);
+    assert.match(result.output, /任务版本在自检期间发生了变化/);
+    assert.equal(git(dir, "rev-parse", "main"), before);
+    assert.notEqual(git(target, "rev-parse", "HEAD"), before, "并发提交仍应安全留在任务分支");
+  } finally {
+    removeTask(dir, target);
+  }
+});
+
 test("本地收尾：任一边不干净、自检失败或自检制造新文件，都不改主干", async () => {
   const scenarios = [
     {
