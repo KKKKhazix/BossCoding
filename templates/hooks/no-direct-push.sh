@@ -40,7 +40,20 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     *) continue ;; # 提交号全零＝远端还没有这条分支：首次推送，放行
   esac
   printf '\n✗ 禁止直推 %s：改动要走 PR（一次改动的申请单），过了质检才进主干。\n' "$default_branch" >&2
-  printf '  这么走：git checkout -b <分支名> → 提交 → 推这条分支 → 开 PR。\n' >&2
+  # 两种处境要给两种救法。实测事故：本框架自己教「本地阶段合并回主干」，等连上 GitHub
+  # 之后，那些已经躺在本地主干上的提交推不上去了，而「你去开个分支」根本不适用——
+  # 人被自己的框架锁在门外，唯一出路成了 --no-verify（学会的第一课是绕过门禁）。
+  ahead=$(git rev-list --count "$remote_sha..$local_sha" 2>/dev/null || echo 0)
+  if [ "${ahead:-0}" -gt 0 ]; then
+    rescue_branch="rescue-$(date +%m%d-%H%M)"
+    printf '  你本地的 %s 比远端多 %s 笔提交——它们已经在主干上了，所以「另开分支重做」不适用。\n' "$default_branch" "$ahead" >&2
+    printf '  这么救（把本地主干的进度原样送去开 PR，一条命令）：\n' >&2
+    printf '      git push origin %s:refs/heads/%s\n' "$default_branch" "$rescue_branch" >&2
+    printf '  然后在 GitHub 上用 %s 开一个 PR，过完质检合并——你的东西一笔都不会丢。\n' "$rescue_branch" >&2
+    printf '  下次起：连上 GitHub 之后就不在本地合并了，改动留在分支上走 PR。\n' >&2
+  else
+    printf '  这么走：git checkout -b <分支名> → 提交 → 推这条分支 → 开 PR。\n' >&2
+  fi
   printf '  确实要直推（明知故犯而不是手抖）：git push --no-verify（git 内置逃生阀）。\n\n' >&2
   exit 1
 done

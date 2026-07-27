@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
- * BossCoding 命令入口。五个命令，没有更多：
+ * BossCoding 命令入口。六个命令，没有更多：
  *   init    开司筹备：把流程地基装进当前项目（幂等，不覆盖已有内容）
+ *   status  我在四阶梯的哪一阶、下一步该干什么（只读）
  *   check   跑守卫：9 项机器检查，任一红即非零退出
  *   task    开并行任务：独立工作区＋分支，一条命令（只建不删）
  *   update  刷新框架管理的文件（老板的规则永不被碰）
@@ -19,6 +20,7 @@ const HELP = `BossCoding——你是老板：需求你说，制度盯人。
 
 用法：
   npx bosscoding init      开司筹备：装好规则文件、守卫、质检口、决策档案与技能
+  npx boss status          我现在在哪一阶、下一步该干什么（只读，看不懂就先跑它）
   npx boss check           跑 9 项守卫（npm run preflight 的内核；装完后短名即可）
   npx boss task <任务名>   开一条并行任务：独立工作区＋分支，把新文件夹拖给一个新的 AI 会话
   npx boss update          刷新框架管理的文件（CI／决策模板／技能／git hook；你的规则永不被碰）
@@ -45,6 +47,10 @@ async function main() {
   if (cmd === "check") {
     const { runCheck } = await import("../lib/commands/check.mjs");
     return runCheck();
+  }
+  if (cmd === "status") {
+    const { runStatus } = await import("../lib/commands/status.mjs");
+    return runStatus();
   }
   if (cmd === "task") {
     const { runTask } = await import("../lib/commands/task.mjs");

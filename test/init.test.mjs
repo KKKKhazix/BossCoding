@@ -9,7 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { runInit } from "../lib/commands/init.mjs";
+import { runInit, packageNameFrom, refuseReason } from "../lib/commands/init.mjs";
 import { runCheck } from "../lib/commands/check.mjs";
 
 function tmpProject() {
@@ -61,9 +61,11 @@ test("init：空目录一次装齐全部资产", () => {
   const claude = fs.readFileSync(path.join(dir, "CLAUDE.md"), "utf8");
   assert.ok(claude.includes("@AGENTS.md"));
 
-  // Claude 技能入口存在（软链或复制均可）。
+  // Claude 技能入口必须是真实文件，不能是软链——软链在 Windows 上克隆后静默失效。
   for (const skill of ["boss-flow", "boss-ladder"]) {
-    assert.ok(fs.existsSync(path.join(dir, ".claude/skills", skill, "SKILL.md")), `缺 Claude 技能入口 ${skill}`);
+    const entry = path.join(dir, ".claude/skills", skill);
+    assert.ok(fs.existsSync(path.join(entry, "SKILL.md")), `缺 Claude 技能入口 ${skill}`);
+    assert.equal(fs.lstatSync(entry).isSymbolicLink(), false, `${skill} 不该是软链`);
   }
 
   // git hook 也归 init 装（细节与拦截行为见 hooks.test.mjs）。
@@ -97,6 +99,43 @@ test("init 后 git add，守卫全绿（完整开司旅程）", () => {
   } finally {
     unmute();
   }
+});
+
+test("init：中文文件夹名生成合法包名，不是一串连字符", () => {
+  assert.equal(packageNameFrom("我的第一个产品"), "my-project");
+  assert.equal(packageNameFrom("My App 2"), "my-app-2");
+  assert.equal(packageNameFrom("记账-tool"), "tool");
+  assert.equal(packageNameFrom(""), "my-project");
+
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-cn-"));
+  const dir = path.join(parent, "我的第一个产品");
+  fs.mkdirSync(dir);
+  const unmute = muteConsole();
+  try {
+    runInit(dir);
+  } finally {
+    unmute();
+  }
+  const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+  assert.equal(pkg.name, "my-project");
+  assert.doesNotMatch(pkg.name, /^-|-$/, "包名不许以连字符开头或结尾（npm 非法）");
+});
+
+test("init：家目录与桌面这类「东西堆」一律拒绝开工，且不写任何文件", () => {
+  // 判据是位置本身，不是文件数——已有项目接入时目录本来就文件很多。
+  assert.ok(refuseReason(os.homedir()));
+  assert.ok(refuseReason(path.join(os.homedir(), "Desktop")));
+  assert.ok(refuseReason(path.join(os.homedir(), "桌面")));
+  assert.equal(refuseReason(path.join(os.homedir(), "code", "我的产品")), null);
+
+  const unmute = muteConsole();
+  try {
+    // 真的对家目录跑一次：必须返回 1。安全——它在写任何文件之前就退出了。
+    assert.equal(runInit(os.homedir()), 1);
+  } finally {
+    unmute();
+  }
+  assert.equal(fs.existsSync(path.join(os.homedir(), "AGENTS.md")), false, "家目录里不该出现规则文件");
 });
 
 test("init：已有 package.json 只注入不重写", () => {

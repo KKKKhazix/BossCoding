@@ -24,7 +24,7 @@ import decisionFormat from "../lib/guards/decision-format.mjs";
 import noBareTodo from "../lib/guards/no-bare-todo.mjs";
 
 /** 造一个临时 git 仓库，写入 files 并 git add，返回守卫上下文。 */
-function makeRepo(files = {}) {
+function makeRepo(files = {}, { stage = true } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-test-"));
   execFileSync("git", ["init", "-b", "main"], { cwd: dir, stdio: "ignore" });
   for (const [rel, content] of Object.entries(files)) {
@@ -32,7 +32,7 @@ function makeRepo(files = {}) {
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     fs.writeFileSync(abs, content);
   }
-  execFileSync("git", ["add", "-A"], { cwd: dir, stdio: "ignore" });
+  if (stage) execFileSync("git", ["add", "-A"], { cwd: dir, stdio: "ignore" });
   return createContext(dir);
 }
 
@@ -47,6 +47,34 @@ const CLEAN_BASE = {
 test("secrets：干净仓库通过", () => {
   const ctx = makeRepo({ ...CLEAN_BASE, "app.js": "const x = process.env.API_KEY;\n" });
   assert.equal(secrets.run(ctx).length, 0);
+});
+
+test("secrets：全新项目里没提交的密钥照样抓（那个「全绿」曾经是假的）", () => {
+  const token = ["ghp", "_"].join("") + "Z9y8X7w6V5u4T3s2R1q0P9o8N7m6L5k4J3i2";
+  // stage:false ＝ 一切都还没进版本库，正是新人第一天的样子。
+  const ctx = makeRepo({ ...CLEAN_BASE, "config.js": `const t = "${token}";\n` }, { stage: false });
+  const problems = secrets.run(ctx);
+  assert.equal(problems.length, 1);
+  assert.equal(problems[0].file, "config.js");
+});
+
+test("secrets：被 .gitignore 忽略的不扫（否则 node_modules 会把扫描面撑爆）", () => {
+  const token = ["ghp", "_"].join("") + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
+  const ctx = makeRepo(
+    { ...CLEAN_BASE, "node_modules/dep/index.js": `const t = "${token}";\n` },
+    { stage: false },
+  );
+  assert.equal(secrets.run(ctx).length, 0);
+});
+
+test("secrets：没被忽略的 .env 也要报，话术是「下次 add 就进去了」", () => {
+  const ctx = makeRepo(
+    { "AGENTS.md": "# 项目规则\n", "CLAUDE.md": "@AGENTS.md\n", ".env": "TOKEN=abc\n" },
+    { stage: false },
+  );
+  const problems = secrets.run(ctx);
+  assert.equal(problems.length, 1);
+  assert.match(problems[0].msg, /没有被 \.gitignore 忽略/);
 });
 
 test("secrets：抓 GitHub token", () => {
