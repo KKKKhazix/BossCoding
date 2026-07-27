@@ -107,9 +107,11 @@ test("本地阶段：还没连远端 → 放行（0）且不联网；不是 git 
   execFileSync("git", ["init", "-b", "main"], { cwd: noRemote, stdio: "ignore" });
   const notRepo = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-merge-norepo-"));
 
-  const original = { log: console.log, error: console.error };
+  // CI 里全局注入 GITHUB_REPOSITORY，会被 merge 当成仓库身份——测「无远端」必须先清掉。
+  const original = { log: console.log, error: console.error, env: process.env.GITHUB_REPOSITORY };
   console.log = () => {};
   console.error = () => {};
+  delete process.env.GITHUB_REPOSITORY;
   try {
     const fetchPulls = async () => {
       throw new Error("本地阶段不该有任何网络请求");
@@ -121,6 +123,7 @@ test("本地阶段：还没连远端 → 放行（0）且不联网；不是 git 
   } finally {
     console.log = original.log;
     console.error = original.error;
+    if (original.env !== undefined) process.env.GITHUB_REPOSITORY = original.env;
   }
 });
 
