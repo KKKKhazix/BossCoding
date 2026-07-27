@@ -27,6 +27,7 @@ npm install
 | `npx boss check` | 8 项守卫：密钥不进代码、.env 必须被忽略、脚本可执行位、规则单一真身、规则不膨胀、文档无死链、决策记录五节齐全、无裸待办。违反就红 |
 | `.github/workflows/bosscoding.yml` | 质检口：每次改动申请（PR）自动跑守卫＋你的测试，不过检不进主干 |
 | `docs/decisions/` | 决策档案室：「当初为什么这么定」只追加、不修改 |
+| 两个 git hook | 主工作区只跑主干：多个 AI 并行时，谁在主工作区开分支干活就当场拦下。**只有你真的开了独立工作区才启用**，单人单工作区的项目里它一声不吭 |
 | `.agents/skills/` 与 `.claude/skills/` | 开工技能：教 AI 按「分支 → 自检 → Draft PR → 排队 → 合并」的次序交付 |
 | `.gemini/` 与 `.iflow/` | 两行配置，让 Gemini CLI 与 iFlow 也认同一份规则文件 |
 
@@ -38,12 +39,12 @@ npm install
 
 ## 更新机制
 
-守卫与工具的逻辑住在 `bosscoding` 包里，你的项目只有一行版本引用。维护者发布改进后，你的项目**下次跑 CI 时自动用上**——版本化、留痕、可回退。你的 `AGENTS.md` 是老板的规则，任何更新都不会远程改写它；`npx boss update` 只刷新框架管理的文件（CI／决策模板／技能）。
+守卫与工具的逻辑住在 `bosscoding` 包里，你的项目只有一行版本引用。维护者发布改进后，你的项目**下次跑 CI 时自动用上**——版本化、留痕、可回退。你的 `AGENTS.md` 是老板的规则，任何更新都不会远程改写它；`npx boss update` 只刷新框架管理的文件（CI／决策模板／技能／git hook）。git hook 不进版本库，所以把仓库重新 clone 一份之后，跑一次 `npx boss update` 把它补回来。
 
 ## 维护者须知
 
 - 运行时零第三方依赖（只用 Node 标准库），`node --test` 跑单测，`node bin/bosscoding.mjs check` 自检。
-- 结构：`bin/`（命令入口）、`lib/guards/`（8 项守卫）、`lib/commands/`（init／check／update）、`templates/`（写进用户项目的全部资产）。
+- 结构：`bin/`（命令入口）、`lib/guards/`（8 项守卫）、`lib/commands/`（init／check／update）、`lib/hooks.mjs`（git hook 安装）、`templates/`（写进用户项目的全部资产）。
 - 立法与发布纪律见 [AGENTS.md](AGENTS.md)；范围与形态的裁决理由见 [docs/decisions/2026-07-26-v1-scope.md](docs/decisions/2026-07-26-v1-scope.md)。
 
 ## 许可

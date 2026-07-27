@@ -62,6 +62,11 @@ test("init：空目录一次装齐全部资产", () => {
 
   // Claude 技能入口存在（软链或复制均可）。
   assert.ok(fs.existsSync(path.join(dir, ".claude/skills/boss-flow/SKILL.md")), "缺 Claude 技能入口");
+
+  // git hook 也归 init 装（细节与拦截行为见 hooks.test.mjs）。
+  for (const name of ["pre-commit", "post-checkout"]) {
+    assert.ok(fs.existsSync(path.join(dir, ".git/hooks", name)), `缺 git hook ${name}`);
+  }
 });
 
 test("init：幂等——跑两次不覆盖、不重复追加", () => {
