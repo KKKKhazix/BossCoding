@@ -102,6 +102,31 @@ test("--pr 指定编号时按编号认领，不看分支名", () => {
   assert.equal(r.verdict, "go");
 });
 
+test("本地阶段：还没连远端 → 放行（0）且不联网；不是 git 仓库 → 明确失败（1）", async () => {
+  const noRemote = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-merge-local-"));
+  execFileSync("git", ["init", "-b", "main"], { cwd: noRemote, stdio: "ignore" });
+  const notRepo = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-merge-norepo-"));
+
+  // CI 里全局注入 GITHUB_REPOSITORY，会被 merge 当成仓库身份——测「无远端」必须先清掉。
+  const original = { log: console.log, error: console.error, env: process.env.GITHUB_REPOSITORY };
+  console.log = () => {};
+  console.error = () => {};
+  delete process.env.GITHUB_REPOSITORY;
+  try {
+    const fetchPulls = async () => {
+      throw new Error("本地阶段不该有任何网络请求");
+    };
+    // 「还没有远端」不是错误，是四阶梯的第 0–1 阶之间：放行并指路。
+    assert.equal(await runMerge(noRemote, { fetchPulls, now: NOW }), 0);
+    // 「不是 git 仓库」与「没有远端」是两种含义不同的失败，不许压成一句。
+    assert.equal(await runMerge(notRepo, { fetchPulls, now: NOW }), 1);
+  } finally {
+    console.log = original.log;
+    console.error = original.error;
+    if (original.env !== undefined) process.env.GITHUB_REPOSITORY = original.env;
+  }
+});
+
 test("origin 指向镜像或代理时，靠 GITHUB_REPOSITORY 认身份", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-merge-env-"));
   execFileSync("git", ["init", "-b", "lane/b"], { cwd: dir, stdio: "ignore" });

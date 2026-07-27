@@ -50,7 +50,7 @@ function tryCommit(cwd, file) {
   }
 }
 
-test("装：两个 hook 都写进去，且带可执行位", () => {
+test("装：三个 hook 都写进去，且带可执行位", () => {
   const dir = repo();
   const result = installHooks(dir);
   assert.deepEqual(result.installed.sort(), [...HOOK_NAMES].sort());
@@ -136,6 +136,79 @@ test("拦：CI 里不出声（CI 没有另一个 agent，也没人看警告）",
   execFileSync("git", ["commit", "-qm", "f"], { cwd: dir, env: { ...GIT_ENV, CI: "true" }, stdio: "pipe" });
 
   fs.rmSync(linked, { recursive: true, force: true });
+});
+
+/** 本地 bare 仓库当 origin，让 push 全程离线可测。 */
+function bareRemote(dir) {
+  const bare = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-origin-"));
+  execFileSync("git", ["init", "-q", "--bare", bare], { env: GIT_ENV, stdio: "pipe" });
+  git(dir, "remote", "add", "origin", bare);
+  return bare;
+}
+
+function tryPush(cwd, ...args) {
+  try {
+    git(cwd, "push", "-q", ...args);
+    return { ok: true, output: "" };
+  } catch (error) {
+    return { ok: false, output: `${error.stderr ?? ""}${error.stdout ?? ""}` };
+  }
+}
+
+test("直推门禁：首推放行、二推被拦、分支照推、--no-verify 逃生、CI 放行", () => {
+  const dir = repo();
+  installHooks(dir);
+  bareRemote(dir);
+
+  // 首次推送：远端还没有 main，放行（否则第 1 阶「连接 GitHub」被自己拦死）。
+  const first = tryPush(dir, "origin", "main");
+  assert.ok(first.ok, `首推不该被拦：${first.output}`);
+
+  // 远端 main 已存在后再直推 → 拦，且话术教人走 PR。
+  fs.writeFileSync(path.join(dir, "direct.txt"), "direct\n");
+  git(dir, "add", "-A");
+  git(dir, "commit", "-qm", "direct");
+  const blocked = tryPush(dir, "origin", "main");
+  assert.equal(blocked.ok, false, "直推已存在的远端主干应当被拦");
+  assert.match(blocked.output, /禁止直推 main/);
+  assert.match(blocked.output, /PR/);
+
+  // 逃生阀：git 内置 --no-verify，不另造旁路。
+  assert.ok(tryPush(dir, "--no-verify", "origin", "main").ok, "--no-verify 必须能走");
+
+  // 功能分支照推——这正是被推荐的姿势。
+  git(dir, "checkout", "-q", "-b", "lane/push");
+  fs.writeFileSync(path.join(dir, "lane.txt"), "lane\n");
+  git(dir, "add", "-A");
+  git(dir, "commit", "-qm", "lane");
+  const branchPush = tryPush(dir, "origin", "lane/push");
+  assert.ok(branchPush.ok, `推分支不该被拦：${branchPush.output}`);
+
+  // 从分支偷袭主干（push HEAD:main）也算直推 → 拦。
+  const sneaky = tryPush(dir, "origin", "HEAD:main");
+  assert.equal(sneaky.ok, false, "HEAD:main 偷袭应当被拦");
+
+  // CI 里放行：CI 的推送是流程自己的动作。
+  execFileSync("git", ["push", "-q", "origin", "HEAD:main"], {
+    cwd: dir,
+    env: { ...GIT_ENV, CI: "true" },
+    stdio: "pipe",
+  });
+});
+
+test("直推门禁：非 origin 的远端（备份镜像）不拦", () => {
+  const dir = repo();
+  installHooks(dir);
+  const backup = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-backup-"));
+  execFileSync("git", ["init", "-q", "--bare", backup], { env: GIT_ENV, stdio: "pipe" });
+  git(dir, "remote", "add", "backup", backup);
+
+  git(dir, "push", "-q", "backup", "main");
+  fs.writeFileSync(path.join(dir, "mirror.txt"), "mirror\n");
+  git(dir, "add", "-A");
+  git(dir, "commit", "-qm", "mirror");
+  const again = tryPush(dir, "backup", "main");
+  assert.ok(again.ok, `备份镜像不该被拦：${again.output}`);
 });
 
 test("提醒：切分支只警告不拦（此刻改正成本为零）", () => {

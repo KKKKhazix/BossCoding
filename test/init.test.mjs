@@ -43,6 +43,7 @@ test("init：空目录一次装齐全部资产", () => {
     "docs/decisions/README.md",
     "docs/decisions/_template.md",
     ".agents/skills/boss-flow/SKILL.md",
+    ".agents/skills/boss-ladder/SKILL.md",
     ".gemini/settings.json",
     ".iflow/settings.json",
     ".gitignore",
@@ -61,10 +62,12 @@ test("init：空目录一次装齐全部资产", () => {
   assert.ok(claude.includes("@AGENTS.md"));
 
   // Claude 技能入口存在（软链或复制均可）。
-  assert.ok(fs.existsSync(path.join(dir, ".claude/skills/boss-flow/SKILL.md")), "缺 Claude 技能入口");
+  for (const skill of ["boss-flow", "boss-ladder"]) {
+    assert.ok(fs.existsSync(path.join(dir, ".claude/skills", skill, "SKILL.md")), `缺 Claude 技能入口 ${skill}`);
+  }
 
   // git hook 也归 init 装（细节与拦截行为见 hooks.test.mjs）。
-  for (const name of ["pre-commit", "post-checkout"]) {
+  for (const name of ["pre-commit", "post-checkout", "pre-push"]) {
     assert.ok(fs.existsSync(path.join(dir, ".git/hooks", name)), `缺 git hook ${name}`);
   }
 });
