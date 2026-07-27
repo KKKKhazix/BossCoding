@@ -63,7 +63,7 @@ npm install
 | `AGENTS.md` | 老板定下的唯一规则：AI 怎么干活、怎么汇报、什么事必须先问 |
 | `CLAUDE.md` | 让 Claude Code 读取同一份规则，不另建一套 |
 | `npx boss status` | 只读状态盘：现在在哪一阶、环境齐不齐、AI 下一步该做什么 |
-| `npx boss check` | 九项基础检查：保护密钥、规则、文档和自动检查配置；它不冒充产品功能测试 |
+| `npx boss check` | 一组基础检查：保护密钥、规则、文档和自动检查配置；它不冒充产品功能测试 |
 | `npx boss task <任务名>` | 为并行任务准备互不干扰的工作区 |
 | `npx bosscoding finish` | 本地收尾：先自检，再从任务工作区安全合回稳定版本；不自动删除任何东西 |
 | `npx boss merge` | 连上 GitHub 后判断现在是否轮到这项改动合并 |
