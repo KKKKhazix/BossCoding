@@ -61,3 +61,30 @@ test("让路：别人手写的同名技能不动", () => {
   assert.ok(result.skipped.includes(".agents/skills/boss-flow/SKILL.md"));
   assert.match(fs.readFileSync(mine, "utf8"), /别动我/);
 });
+
+test("交付技能：AI 负责预览、本地收尾与老板下一步", () => {
+  const dir = tmp();
+  installSkills(dir);
+  const flow = fs.readFileSync(path.join(dir, ".agents/skills/boss-flow/SKILL.md"), "utf8");
+
+  assert.match(flow, /启动并直接打开给老板看/);
+  assert.match(flow, /只有真实环境限制/);
+  assert.match(flow, /npx bosscoding finish/);
+  assert.doesNotMatch(flow, /git checkout main/);
+  assert.match(flow, /docs\/decisions\//);
+  assert.match(flow, /不自动删除任务工作区/);
+  assert.match(flow, /一句可直接说给 AI 的自然语言/);
+});
+
+test("四阶梯技能：先验收再注册，质检承诺不夸大", () => {
+  const dir = tmp();
+  installSkills(dir);
+  const ladder = fs.readFileSync(path.join(dir, ".agents/skills/boss-ladder/SKILL.md"), "utf8");
+
+  assert.match(ladder, /第一版已经打开给老板看，并且老板明确验收通过后，才提 GitHub/);
+  assert.doesNotMatch(ladder, /第一次埋头干活/);
+  assert.match(ladder, /自动检查/);
+  assert.match(ladder, /本机保护/);
+  assert.match(ladder, /不一定能硬性拦住网页合并/);
+  assert.match(ladder, /不要让老板执行命令或清理工作区/);
+});
