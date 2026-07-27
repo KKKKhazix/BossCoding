@@ -102,6 +102,31 @@ test("--pr 指定编号时按编号认领，不看分支名", () => {
   assert.equal(r.verdict, "go");
 });
 
+test("origin 指向镜像或代理时，靠 GITHUB_REPOSITORY 认身份", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-merge-env-"));
+  execFileSync("git", ["init", "-b", "lane/b"], { cwd: dir, stdio: "ignore" });
+  execFileSync("git", ["remote", "add", "origin", "http://mirror.internal/git/o/r"], { cwd: dir, stdio: "ignore" });
+
+  const original = { log: console.log, error: console.error, env: process.env.GITHUB_REPOSITORY };
+  console.log = () => {};
+  console.error = () => {};
+  try {
+    const fetchPulls = async ({ owner, repo }) => {
+      assert.deepEqual({ owner, repo }, { owner: "o", repo: "r" });
+      return [pr(9, "lane/b")];
+    };
+    process.env.GITHUB_REPOSITORY = "o/r";
+    assert.equal(await runMerge(dir, { fetchPulls, now: NOW }), 0);
+    delete process.env.GITHUB_REPOSITORY;
+    assert.equal(await runMerge(dir, { fetchPulls, now: NOW }), 1); // 认不出仓库就明说，不蒙
+  } finally {
+    console.log = original.log;
+    console.error = original.error;
+    if (original.env === undefined) delete process.env.GITHUB_REPOSITORY;
+    else process.env.GITHUB_REPOSITORY = original.env;
+  }
+});
+
 test("端到端：退出码 0 ＝ 轮到你，1 ＝ 还没轮到", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-merge-"));
   execFileSync("git", ["init", "-b", "lane/b"], { cwd: dir, stdio: "ignore" });
