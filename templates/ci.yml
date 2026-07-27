@@ -1,12 +1,13 @@
-# BossCoding 质检口（由 BossCoding 管理：`npx boss update` 会刷新本文件，自定义步骤请放独立的 workflow 文件）
+# bosscoding:managed-ci
+# BossCoding 质检口（请用项目选定的包管理器执行 `bosscoding update`；自定义步骤请放独立的 workflow 文件）
 name: bosscoding
 
 on:
   pull_request:
-    branches: [main]
+    branches: [__BOSSCODING_BRANCH__]
     types: [opened, synchronize, reopened, ready_for_review]
   push:
-    branches: [main]
+    branches: [__BOSSCODING_BRANCH__]
 
 # 只读代码，不写任何 GitHub 资源。
 permissions:
@@ -27,12 +28,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+__BOSSCODING_MANAGER_SETUP__
       - name: 安装依赖
-        run: |
-          if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
-      - name: 守卫
-        run: npx boss check
-      - name: 代码检查（项目配置了才跑）
-        run: npm run lint --if-present
-      - name: 测试（项目配置了才跑）
-        run: npm test --if-present
+        run: __BOSSCODING_INSTALL__
+      # 云端与本地交付共用同一扇总闸；项目原有检查会由 init/update 收进 preflight。
+      - name: 交付前自检
+        run: __BOSSCODING_PREFLIGHT__

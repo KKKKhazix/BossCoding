@@ -2,7 +2,7 @@
 # bosscoding:main-worktree-guard
 #
 # 主工作区只跑 main。由 BossCoding 安装到 .git/hooks/pre-commit 与 post-checkout
-# （同一份判断挂两处，靠 $0 的文件名分工）；`npx boss update` 会刷新本文件。
+# （同一份判断挂两处，靠 $0 的文件名分工）；`bosscoding update` 会刷新本文件。
 # 想停用：删掉这两个 hook 文件即可，BossCoding 不会偷偷装回来。
 #
 # 挂的真实事故：两个 agent 同时在主工作区各自开分支干活，37 分钟内 7 次分支切换。

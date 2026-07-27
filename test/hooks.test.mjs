@@ -72,7 +72,7 @@ test("装：幂等——再跑一次不重复报告、不改内容", () => {
   assert.equal(fs.readFileSync(path.join(dir, ".git/hooks/pre-commit"), "utf8"), before);
 });
 
-test("装：别人的 hook 一律让路，只刷新自己写的", () => {
+test("装：别人的 hook 一律让路；仅有 BossCoding marker 也不能证明可整份覆盖", () => {
   const dir = repo();
   const mine = path.join(dir, ".git/hooks/pre-commit");
   fs.writeFileSync(mine, "#!/bin/sh\n# husky 之类的既有 hook\nexit 0\n");
@@ -80,10 +80,121 @@ test("装：别人的 hook 一律让路，只刷新自己写的", () => {
   assert.deepEqual(result.skipped, ["pre-commit"]);
   assert.match(fs.readFileSync(mine, "utf8"), /既有 hook/);
 
-  // 自己写过的那份被改旧了，则允许刷新。
+  // 只有 marker、没有安装时记录的正文哈希，可能是用户手工合并过的，必须让路。
   const checkout = path.join(dir, ".git/hooks/post-checkout");
   fs.writeFileSync(checkout, "#!/bin/sh\n# bosscoding:main-worktree-guard 旧版\nexit 0\n");
-  assert.deepEqual(installHooks(dir).refreshed, ["post-checkout"]);
+  const second = installHooks(dir);
+  assert.ok(second.skipped.includes("post-checkout"));
+  assert.match(fs.readFileSync(checkout, "utf8"), /旧版/);
+});
+
+test("装：官方 hook 后追加用户命令会失去纯官方哈希，更新时保留不覆盖", () => {
+  const dir = repo();
+  installHooks(dir);
+  const target = path.join(dir, ".git/hooks/pre-commit");
+  fs.appendFileSync(target, "\n# 用户自己的检查\nnode my-check.mjs\n");
+
+  const result = installHooks(dir);
+  assert.ok(result.skipped.includes("pre-commit"));
+  assert.equal(result.refreshed.includes("pre-commit"), false);
+  assert.match(fs.readFileSync(target, "utf8"), /node my-check\.mjs/);
+});
+
+test("装：单个 hook 或所有权清单是软链时绝不跟随写到项目外", (t) => {
+  const dir = repo();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-hook-leaf-outside-"));
+  const externalHook = path.join(outside, "pre-push");
+  try {
+    fs.symlinkSync(externalHook, path.join(dir, ".git/hooks/pre-push"));
+  } catch {
+    t.skip("当前平台不允许创建文件软链");
+    return;
+  }
+
+  const result = installHooks(dir);
+  assert.ok(result.skipped.includes("pre-push"));
+  assert.equal(fs.existsSync(externalHook), false);
+
+  const guarded = repo();
+  const externalOwnership = path.join(outside, "ownership.json");
+  fs.writeFileSync(externalOwnership, '{"user":"content"}\n');
+  fs.symlinkSync(
+    externalOwnership,
+    path.join(guarded, ".git/hooks/.bosscoding-owned-hooks.json"),
+  );
+  const blocked = installHooks(guarded);
+  assert.equal(blocked.blocked.length, 1);
+  assert.equal(fs.readFileSync(externalOwnership, "utf8"), '{"user":"content"}\n');
+  for (const name of HOOK_NAMES) {
+    assert.equal(fs.existsSync(path.join(guarded, ".git/hooks", name)), false);
+  }
+});
+
+test("升级：精确等于上一版官方正文的 hook 可迁移并建立所有权记录", () => {
+  const dir = repo();
+  installHooks(dir);
+  const target = path.join(dir, ".git/hooks/pre-commit");
+  const ownership = path.join(dir, ".git/hooks/.bosscoding-owned-hooks.json");
+  const legacy = fs
+    .readFileSync(target, "utf8")
+    .replace("`bosscoding update` 会刷新本文件", "`npx boss update` 会刷新本文件");
+  fs.writeFileSync(target, legacy);
+  fs.unlinkSync(ownership);
+
+  const result = installHooks(dir);
+  assert.ok(result.refreshed.includes("pre-commit"));
+  assert.match(fs.readFileSync(target, "utf8"), /`bosscoding update`/);
+  assert.ok(fs.existsSync(ownership));
+});
+
+test("装：core.hooksPath 指到仓库外时明确阻止，绝不写共享目录", () => {
+  const dir = repo();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-global-hooks-"));
+  git(dir, "config", "core.hooksPath", outside);
+
+  const result = installHooks(dir);
+  assert.deepEqual(result.installed, []);
+  assert.equal(result.blocked.length, 1);
+  assert.match(result.blocked[0], /指向项目外|没有写入/);
+  assert.deepEqual(fs.readdirSync(outside), []);
+});
+
+test("装：仓库内 core.hooksPath 仍可使用", () => {
+  const dir = repo();
+  git(dir, "config", "core.hooksPath", ".githooks");
+
+  const result = installHooks(dir);
+  assert.deepEqual(result.blocked, []);
+  assert.deepEqual(result.installed.sort(), [...HOOK_NAMES].sort());
+  for (const name of HOOK_NAMES) {
+    assert.ok(fs.existsSync(path.join(dir, ".githooks", name)), `仓库内缺 ${name}`);
+  }
+});
+
+test("装：兼容旧 Git，不依赖 --path-format；路径探测失败必须明确阻止", () => {
+  const dir = repo();
+  const calls = [];
+  const compatibleRunner = (command, args, options) => {
+    calls.push(args);
+    return execFileSync(command, args, options);
+  };
+  const installed = installHooks(dir, { execFileSync: compatibleRunner });
+  assert.deepEqual(installed.blocked, []);
+  assert.equal(calls.some((args) => args.includes("--path-format=absolute")), false);
+  assert.equal(calls.some((args) => args.includes("--git-path")), true);
+
+  const failedDir = repo();
+  const blocked = installHooks(failedDir, {
+    execFileSync: () => {
+      throw new Error("old git probe failed");
+    },
+  });
+  assert.deepEqual(blocked.installed, []);
+  assert.equal(blocked.blocked.length, 1);
+  assert.match(blocked.blocked[0], /无法确认.*Git hook 路径|没有写入/);
+  for (const name of HOOK_NAMES) {
+    assert.equal(fs.existsSync(path.join(failedDir, ".git/hooks", name)), false);
+  }
 });
 
 test("拦：单工作区的项目里彻底闭嘴（框架自己教的流程不能被自己拦住）", () => {

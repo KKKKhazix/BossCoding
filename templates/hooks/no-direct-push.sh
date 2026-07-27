@@ -2,7 +2,7 @@
 # bosscoding:no-direct-push-guard
 #
 # 禁止直推主干：改动走 PR（一次改动的申请单），过了质检才进 main。
-# 由 BossCoding 安装到 .git/hooks/pre-push；`npx boss update` 会刷新本文件。
+# 由 BossCoding 安装到 .git/hooks/pre-push；`bosscoding update` 会刷新本文件。
 # 想停用：删掉本文件即可，BossCoding 不会偷偷装回来。
 #
 # 挂的真实事故：没有分支保护的仓库里，一次手误把没过质检的提交直接推上主干，

@@ -1,3 +1,5 @@
+<!-- bosscoding:managed-decision-template -->
+
 # （主题）（YYYY-MM-DD）
 
 ## 影响
