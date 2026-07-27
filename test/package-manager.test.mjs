@@ -100,6 +100,7 @@ test("包管理器：尚无锁文件时也识别 pnpm／Yarn／Bun 的项目级�
   const cases = [
     ["pnpm", "pnpm-workspace.yaml", "packages:\n  - apps/*\n", false],
     ["yarn", ".yarnrc.yml", "nodeLinker: node-modules\n", false],
+    ["yarn", ".yarnrc", "--install.ignore-scripts true\n", false],
     ["yarn", ".yarn", null, true],
     ["bun", "bunfig.toml", "[install]\n", false],
   ];
@@ -111,6 +112,28 @@ test("包管理器：尚无锁文件时也识别 pnpm／Yarn／Bun 的项目级�
     assert.equal(manager.name, name);
     assert.equal(manager.ambiguous, false);
   }
+});
+
+test("Yarn：现代项目用 immutable，Classic 项目用 frozen-lockfile", () => {
+  const modernByVersion = packageManagerCommand(
+    { name: "yarn", version: "4.2.0", locks: ["yarn.lock"], configs: [] },
+    "install",
+    { frozen: true },
+  );
+  const modernByConfig = packageManagerCommand(
+    { name: "yarn", version: null, locks: ["yarn.lock"], configs: [".yarnrc.yml"] },
+    "install",
+    { frozen: true },
+  );
+  const classic = packageManagerCommand(
+    { name: "yarn", version: "1.22.22", locks: ["yarn.lock"], configs: [".yarnrc"] },
+    "install",
+    { frozen: true },
+  );
+
+  assert.deepEqual(modernByVersion.args, ["install", "--immutable"]);
+  assert.deepEqual(modernByConfig.args, ["install", "--immutable"]);
+  assert.deepEqual(classic.args, ["install", "--frozen-lockfile"]);
 });
 
 test("包管理器：npm-shrinkwrap 与 package-lock 一样走冻结安装", () => {

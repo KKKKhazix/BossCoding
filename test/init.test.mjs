@@ -224,13 +224,11 @@ test("init：家目录与桌面这类「东西堆」一律拒绝开工，且不�
   if (fs.existsSync("/tmp")) assert.ok(refuseReason("/tmp"));
   assert.equal(refuseReason(path.join(os.homedir(), "code", "我的产品")), null);
 
-  const unmute = muteConsole();
-  try {
-    // 真的对家目录跑一次：必须返回 1。安全——它在写任何文件之前就退出了。
-    assert.equal(runInit(os.homedir()), 1);
-  } finally {
-    unmute();
-  }
+  // 真的对家目录跑一次：必须返回 1。安全——它在写任何文件之前就退出了。
+  const captured = captureConsole(() => runInit(os.homedir()));
+  assert.equal(captured.result, 1);
+  assert.match(captured.output, /把这句话交给 AI/);
+  assert.doesNotMatch(captured.output, /\bmkdir\b|\bcd\s/);
   assert.equal(fs.existsSync(path.join(os.homedir(), "AGENTS.md")), false, "家目录里不该出现规则文件");
 });
 
@@ -453,6 +451,75 @@ test("init：CI 跟随仓库真实稳定分支，不把 master 硬改成 main", 
   const ci = fs.readFileSync(path.join(dir, ".github/workflows/bosscoding.yml"), "utf8");
   assert.match(ci, /branches: \["master"\]/);
   assert.doesNotMatch(ci, /branches: \["main"\]/);
+});
+
+test("init：失效 origin/HEAD 不覆盖真实 main，并把确认结果记进本仓库", () => {
+  const dir = tmpProject();
+  execFileSync("git", ["init", "-b", "main"], { cwd: dir, stdio: "ignore" });
+  fs.writeFileSync(path.join(dir, "package.json"), '{"name":"main-project","private":true}\n');
+  fs.writeFileSync(path.join(dir, "seed.txt"), "seed\n");
+  execFileSync("git", ["add", "-A"], { cwd: dir, stdio: "ignore" });
+  execFileSync(
+    "git",
+    [
+      "-c",
+      "user.name=boss",
+      "-c",
+      "user.email=boss@example.com",
+      "commit",
+      "-qm",
+      "init",
+    ],
+    { cwd: dir, stdio: "ignore" },
+  );
+  execFileSync(
+    "git",
+    ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/missing"],
+    { cwd: dir, stdio: "ignore" },
+  );
+
+  const captured = captureConsole(() => runInit(dir));
+  assert.equal(captured.result, 0, captured.output);
+  const ci = fs.readFileSync(path.join(dir, ".github/workflows/bosscoding.yml"), "utf8");
+  assert.match(ci, /branches: \["main"\]/);
+  assert.equal(
+    execFileSync("git", ["config", "--local", "--get", "bosscoding.stableBranch"], {
+      cwd: dir,
+      encoding: "utf8",
+    }).trim(),
+    "main",
+  );
+});
+
+test("init：多个自定义分支且没有可信默认分支时零写入退出", () => {
+  const dir = tmpProject();
+  execFileSync("git", ["init", "-b", "develop"], { cwd: dir, stdio: "ignore" });
+  const pkg = '{"name":"ambiguous-branch","private":true}\n';
+  fs.writeFileSync(path.join(dir, "package.json"), pkg);
+  fs.writeFileSync(path.join(dir, "seed.txt"), "seed\n");
+  execFileSync("git", ["add", "-A"], { cwd: dir, stdio: "ignore" });
+  execFileSync(
+    "git",
+    [
+      "-c",
+      "user.name=boss",
+      "-c",
+      "user.email=boss@example.com",
+      "commit",
+      "-qm",
+      "init",
+    ],
+    { cwd: dir, stdio: "ignore" },
+  );
+  execFileSync("git", ["branch", "release"], { cwd: dir, stdio: "ignore" });
+
+  const captured = captureConsole(() => runInit(dir));
+  assert.equal(captured.result, 1);
+  assert.match(captured.output, /找不到唯一的稳定分支/);
+  assert.doesNotMatch(captured.output, /\n\s+at |Error:/);
+  assert.equal(fs.readFileSync(path.join(dir, "package.json"), "utf8"), pkg);
+  assert.equal(fs.existsSync(path.join(dir, "AGENTS.md")), false);
+  assert.equal(fs.existsSync(path.join(dir, ".github")), false);
 });
 
 test("init：没有 Git 时用人话失败，不显示程序堆栈", () => {

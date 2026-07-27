@@ -1,7 +1,7 @@
 #!/bin/sh
 # bosscoding:no-direct-push-guard
 #
-# 禁止直推主干：改动走 PR（一次改动的申请单），过了质检才进 main。
+# 禁止直推主干：改动走 PR（一次改动的申请单），过了质检才进稳定分支。
 # 由 BossCoding 安装到 .git/hooks/pre-push；`bosscoding update` 会刷新本文件。
 # 想停用：删掉本文件即可，BossCoding 不会偷偷装回来。
 #
@@ -20,15 +20,31 @@
 [ "$1" = "origin" ] || exit 0
 
 # 主干叫什么由仓库说了算，不假设一定是 main（与 main-worktree.sh 同一套判据）。
-default_branch=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)
-default_branch=${default_branch#origin/}
+default_branch=$(git config --local --get bosscoding.stableBranch 2>/dev/null)
+if [ -n "$default_branch" ] && ! git show-ref --verify --quiet "refs/heads/$default_branch"; then
+  default_branch=
+fi
+if [ -z "$default_branch" ]; then
+  default_branch=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)
+  default_branch=${default_branch#origin/}
+fi
+if [ -n "$default_branch" ] && ! git show-ref --verify --quiet "refs/heads/$default_branch"; then
+  default_branch=
+fi
 if [ -z "$default_branch" ]; then
   if git show-ref --verify --quiet refs/heads/main; then
     default_branch=main
   elif git show-ref --verify --quiet refs/heads/master; then
     default_branch=master
+  elif git show-ref --verify --quiet refs/heads/trunk; then
+    default_branch=trunk
   else
-    exit 0 # 看不出主干是哪条，不猜、不拦。
+    # 兼容已有项目把稳定分支叫 develop 等名字：排除 lane/ 任务分支后，
+    # 只剩唯一候选时才采用；多个候选仍不猜、不拦。
+    stable_candidates=$(git for-each-ref --format='%(refname:short)' refs/heads 2>/dev/null | sed '/^lane\//d')
+    stable_count=$(printf '%s\n' "$stable_candidates" | sed '/^$/d' | wc -l | tr -d ' ')
+    [ "${stable_count:-0}" -eq 1 ] || exit 0
+    default_branch=$(printf '%s\n' "$stable_candidates" | sed -n '1p')
   fi
 fi
 

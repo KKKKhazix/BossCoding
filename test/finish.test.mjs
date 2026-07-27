@@ -161,7 +161,7 @@ test("本地收尾：任务工作区跑自检，快进主干，不删除；重�
       controlled.calls.some(
         (call) =>
           call.command === "npm" &&
-          call.args.join(" ") === "test" &&
+          call.args.join(" ") === "run test" &&
           fs.realpathSync(call.cwd) === fs.realpathSync(target),
       ),
       "产品测试必须在任务工作区运行",
@@ -387,6 +387,121 @@ test("GitHub 收尾：只查队列并给下一步，不上传、不合并主干"
     );
     assert.match(result.output, /只查队列，不自动上传、不建申请单、不合并/);
     assert.match(result.output, /下一步/);
+  } finally {
+    removeTask(dir, target);
+  }
+});
+
+test("包管理器：收尾的产品检查沿用 npm／pnpm／Yarn／Bun", async () => {
+  const cases = [
+    ["npm", "npm@10.0.0", "package-lock.json"],
+    ["pnpm", "pnpm@9.0.0", "pnpm-lock.yaml"],
+    ["yarn", "yarn@4.0.0", "yarn.lock"],
+    ["bun", "bun@1.1.0", "bun.lock"],
+  ];
+
+  for (const [manager, declaration, lock] of cases) {
+    const dir = repo();
+    const target = openTask(dir, `收尾-${manager}`);
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(target, "package.json"), "utf8"));
+      pkg.packageManager = declaration;
+      fs.writeFileSync(path.join(target, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
+      fs.writeFileSync(path.join(target, lock), "lock\n");
+      fs.writeFileSync(path.join(target, "done.txt"), "done\n");
+      git(target, "add", "-A");
+      git(target, "commit", "-qm", `${manager} task`);
+
+      const calls = [];
+      const runner = (command, args, options) => {
+        calls.push({ command, args: [...args], cwd: options.cwd });
+        if (command === manager) return "";
+        return execFileSync(command, args, {
+          ...options,
+          env: GIT_ENV,
+          stdio: options.stdio === "inherit" ? "pipe" : options.stdio,
+        });
+      };
+      const result = await capture(() =>
+        runFinish(target, { runner, checkRunner: () => 0 }),
+      );
+
+      assert.equal(result.result, 0, `${manager}: ${result.output}`);
+      const scripts = calls.filter((call) => call.command === manager);
+      assert.deepEqual(scripts.map((call) => call.args), [["run", "test"]], manager);
+      if (manager !== "npm") {
+        assert.equal(calls.some((call) => call.command === "npm"), false, manager);
+      }
+    } finally {
+      removeTask(dir, target);
+    }
+  }
+});
+
+test("包管理器：冲突时不运行任何产品检查，也不改主干", async () => {
+  const dir = repo();
+  const target = openTask(dir, "冲突收尾");
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(target, "package.json"), "utf8"));
+    pkg.packageManager = "pnpm@9.0.0";
+    fs.writeFileSync(path.join(target, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
+    fs.writeFileSync(path.join(target, "pnpm-lock.yaml"), "lock\n");
+    fs.writeFileSync(path.join(target, "yarn.lock"), "lock\n");
+    fs.writeFileSync(path.join(target, "done.txt"), "done\n");
+    git(target, "add", "-A");
+    git(target, "commit", "-qm", "conflicting managers");
+    const before = git(dir, "rev-parse", "main");
+    let checks = 0;
+    const controlled = controllableRunner();
+
+    const result = await capture(() =>
+      runFinish(target, {
+        runner: controlled.runner,
+        checkRunner: () => {
+          checks += 1;
+          return 0;
+        },
+      }),
+    );
+
+    assert.equal(result.result, 1);
+    assert.match(result.output, /多套安装工具/);
+    assert.equal(checks, 0);
+    assert.equal(controlled.calls.some((call) => ["npm", "pnpm", "yarn", "bun"].includes(call.command)), false);
+    assert.equal(git(dir, "rev-parse", "main"), before);
+  } finally {
+    removeTask(dir, target);
+  }
+});
+
+test("自定义稳定分支：develop 从初始化、开任务到收尾全程一致", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-finish-develop-"));
+  git(dir, "init", "-q", "-b", "develop");
+  fs.writeFileSync(
+    path.join(dir, "package.json"),
+    '{"name":"develop-product","private":true,"scripts":{"test":"node --test"}}\n',
+  );
+  fs.mkdirSync(path.join(dir, "test"), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "test", "smoke.test.mjs"),
+    'import assert from "node:assert/strict";\nassert.equal(1, 1);\n',
+  );
+  const initialized = await capture(() => runInit(dir));
+  assert.equal(initialized.result, 0, initialized.output);
+  git(dir, "add", "-A");
+  git(dir, "commit", "-qm", "init develop product");
+
+  const task = await capture(() => runTask(dir, "自定义主干", { installDeps: false }));
+  assert.equal(task.result, 0, task.output);
+  const target = path.join(path.dirname(dir), `${path.basename(dir)}-自定义主干`);
+  try {
+    commitTask(target);
+    const expected = git(target, "rev-parse", "HEAD");
+    const result = await capture(() =>
+      runFinish(target, { runner: controllableRunner().runner, checkRunner: () => 0 }),
+    );
+    assert.equal(result.result, 0, result.output);
+    assert.equal(git(dir, "rev-parse", "develop"), expected);
   } finally {
     removeTask(dir, target);
   }

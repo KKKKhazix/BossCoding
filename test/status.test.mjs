@@ -221,6 +221,49 @@ test("package.json 无法解析时，依赖与测试入口都不能亮绿", () =
   assert.equal(state.testEntryConfigured, false);
 });
 
+test("Yarn PnP：真实非空入口可替代 node_modules；空文件和软链不能亮绿", () => {
+  const dir = project();
+  const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+  pkg.packageManager = "yarn@4.2.0";
+  fs.writeFileSync(path.join(dir, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
+  fs.writeFileSync(path.join(dir, "yarn.lock"), "lock\n");
+  const pnp = path.join(dir, ".pnp.cjs");
+
+  fs.writeFileSync(pnp, "");
+  assert.equal(probe(dir).depsInstalled, false, "空 PnP 入口不能冒充已安装");
+
+  const outside = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-pnp-")), "outside.cjs");
+  fs.writeFileSync(outside, "module.exports = {};\n");
+  fs.rmSync(pnp);
+  try {
+    fs.symlinkSync(outside, pnp);
+    assert.equal(probe(dir).depsInstalled, false, "项目外软链不能冒充已安装");
+  } catch {
+    // 当前平台若不允许软链，仍继续验证真实普通文件。
+  }
+  fs.rmSync(pnp, { force: true });
+  fs.writeFileSync(pnp, "module.exports = {};\n");
+  const ready = probe(dir);
+  assert.equal(ready.packageManager.name, "yarn");
+  assert.equal(ready.depsInstalled, true);
+});
+
+test("状态：多套安装工具冲突时只让 AI 统一，不误导去装依赖或连 GitHub", () => {
+  const dir = project();
+  const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+  pkg.packageManager = "pnpm@9.0.0";
+  fs.writeFileSync(path.join(dir, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
+  fs.writeFileSync(path.join(dir, "pnpm-lock.yaml"), "lock\n");
+  fs.writeFileSync(path.join(dir, "yarn.lock"), "lock\n");
+  commitAll(dir);
+
+  const output = capture(() => runStatus(dir)).output;
+  assert.match(output, /同时出现多套安装工具的痕迹/);
+  const next = output.split("下一步：")[1];
+  assert.match(next, /确认项目原来用哪一种包管理器/);
+  assert.doesNotMatch(next, /安装完整|npm install|连上 GitHub/);
+});
+
 test("自定义测试命令只声明入口，不冒充已验证结果", () => {
   const dir = project();
   const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));

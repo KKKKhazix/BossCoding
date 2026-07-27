@@ -7,7 +7,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -28,10 +29,10 @@ function git(cwd, ...args) {
   return execFileSync("git", args, { cwd, encoding: "utf8", env: GIT_ENV, stdio: "pipe" });
 }
 
-/** 一个有初始提交的仓库，主干叫 main。 */
-function repo() {
+/** 一个有初始提交的仓库；新项目默认 main，也可覆盖为既有项目的主干名。 */
+function repo(branch = "main") {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-hooks-"));
-  git(dir, "init", "-q", "-b", "main");
+  git(dir, "init", "-q", "-b", branch);
   fs.writeFileSync(path.join(dir, "seed.txt"), "seed\n");
   git(dir, "add", "-A");
   git(dir, "commit", "-qm", "init");
@@ -130,7 +131,7 @@ test("装：单个 hook 或所有权清单是软链时绝不跟随写到项目�
   }
 });
 
-test("升级：精确等于上一版官方正文的 hook 可迁移并建立所有权记录", () => {
+test("升级：精确等于所有权记录的旧官方 hook 可刷新", () => {
   const dir = repo();
   installHooks(dir);
   const target = path.join(dir, ".git/hooks/pre-commit");
@@ -139,7 +140,9 @@ test("升级：精确等于上一版官方正文的 hook 可迁移并建立所�
     .readFileSync(target, "utf8")
     .replace("`bosscoding update` 会刷新本文件", "`npx boss update` 会刷新本文件");
   fs.writeFileSync(target, legacy);
-  fs.unlinkSync(ownership);
+  const manifest = JSON.parse(fs.readFileSync(ownership, "utf8"));
+  manifest["pre-commit"] = createHash("sha256").update(legacy).digest("hex");
+  fs.writeFileSync(ownership, `${JSON.stringify(manifest, null, 2)}\n`);
 
   const result = installHooks(dir);
   assert.ok(result.refreshed.includes("pre-commit"));
@@ -169,6 +172,27 @@ test("装：仓库内 core.hooksPath 仍可使用", () => {
   for (const name of HOOK_NAMES) {
     assert.ok(fs.existsSync(path.join(dir, ".githooks", name)), `仓库内缺 ${name}`);
   }
+});
+
+test("装：仓库内 hook 路径若是普通文件或断链，明确阻止而不是抛异常", (t) => {
+  const fileDir = repo();
+  fs.writeFileSync(path.join(fileDir, ".githooks"), "not a directory\n");
+  git(fileDir, "config", "core.hooksPath", ".githooks");
+  const fileResult = installHooks(fileDir);
+  assert.equal(fileResult.blocked.length, 1);
+  assert.match(fileResult.blocked[0], /不是项目内的普通文件夹|无法安全创建/);
+
+  const linkDir = repo();
+  try {
+    fs.symlinkSync(path.join(linkDir, "missing-hooks"), path.join(linkDir, ".githooks"));
+  } catch {
+    t.skip("当前平台不允许创建软链");
+    return;
+  }
+  git(linkDir, "config", "core.hooksPath", ".githooks");
+  const linkResult = installHooks(linkDir);
+  assert.equal(linkResult.blocked.length, 1);
+  assert.match(linkResult.blocked[0], /不是项目内的普通文件夹|无法安全创建/);
 });
 
 test("装：兼容旧 Git，不依赖 --path-format；路径探测失败必须明确阻止", () => {
@@ -233,6 +257,47 @@ test("拦：开了独立工作区之后，主工作区的分支提交被 git 真
   assert.ok(tryCommit(dir, "e.txt").ok, "detached HEAD 不该被拦");
 
   fs.rmSync(linked, { recursive: true, force: true });
+});
+
+test("稳定分支矩阵：失效 origin/HEAD 回退 main，trunk 与唯一 develop 也都能保护", () => {
+  const cases = [
+    { branch: "main", deadRemoteHead: true },
+    { branch: "trunk", deadRemoteHead: false },
+    { branch: "develop", deadRemoteHead: false },
+  ];
+
+  for (const scenario of cases) {
+    const dir = repo(scenario.branch);
+    if (scenario.branch === "develop") {
+      git(dir, "config", "--local", "bosscoding.stableBranch", "develop");
+    }
+    installHooks(dir);
+    if (scenario.deadRemoteHead) {
+      git(dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/missing");
+    }
+    const linked = path.join(path.dirname(dir), `${path.basename(dir)}-${scenario.branch}-lane`);
+    git(dir, "worktree", "add", "-q", linked, "-b", `lane/${scenario.branch}`);
+    try {
+      const checkout = spawnSync("git", ["checkout", "-b", `feature/${scenario.branch}`], {
+        cwd: dir,
+        encoding: "utf8",
+        env: GIT_ENV,
+      });
+      assert.equal(checkout.status, 0, checkout.stderr);
+      assert.match(`${checkout.stdout}${checkout.stderr}`, /主工作区切到了分支/);
+      const blocked = tryCommit(dir, `${scenario.branch}.txt`);
+      assert.equal(blocked.ok, false, scenario.branch);
+      assert.match(blocked.output, new RegExp(`主工作区只跑 ${scenario.branch}`));
+    } finally {
+      if (fs.existsSync(linked)) {
+        execFileSync("git", ["worktree", "remove", "--force", linked], {
+          cwd: dir,
+          env: GIT_ENV,
+          stdio: "pipe",
+        });
+      }
+    }
+  }
 });
 
 test("拦：CI 里不出声（CI 没有另一个 agent，也没人看警告）", () => {
@@ -305,6 +370,33 @@ test("直推门禁：首推放行、二推被拦、分支照推、--no-verify �
     env: { ...GIT_ENV, CI: "true" },
     stdio: "pipe",
   });
+});
+
+test("直推门禁稳定分支矩阵：失效 origin/HEAD 回退 main，trunk 与 develop 二推都拦", () => {
+  const cases = [
+    { branch: "main", deadRemoteHead: true },
+    { branch: "trunk", deadRemoteHead: false },
+    { branch: "develop", deadRemoteHead: false },
+  ];
+  for (const scenario of cases) {
+    const dir = repo(scenario.branch);
+    if (scenario.branch === "develop") {
+      git(dir, "config", "--local", "bosscoding.stableBranch", "develop");
+    }
+    installHooks(dir);
+    bareRemote(dir);
+    assert.ok(tryPush(dir, "origin", scenario.branch).ok, `${scenario.branch} 首推`);
+    if (scenario.deadRemoteHead) {
+      git(dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/missing");
+    }
+    git(dir, "branch", `feature/${scenario.branch}`);
+    fs.writeFileSync(path.join(dir, "next.txt"), "next\n");
+    git(dir, "add", "-A");
+    git(dir, "commit", "-qm", "next");
+    const blocked = tryPush(dir, "origin", scenario.branch);
+    assert.equal(blocked.ok, false, scenario.branch);
+    assert.match(blocked.output, new RegExp(`禁止直推 ${scenario.branch}`));
+  }
 });
 
 test("直推门禁：非 origin 的远端（备份镜像）不拦", () => {

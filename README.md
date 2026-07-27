@@ -13,7 +13,7 @@ BossCoding 专为第一次用 AI 做产品的人设计。你只负责说想法�
 3. 把下面整段复制给 AI：
 
 ```text
-请把当前打开的空文件夹作为我的新产品项目。先确认这里确实没有私人文件，再检查版本记录工具 Git 和运行工具 Node.js 是否可用；缺什么就用大白话告诉我，并尽力替我安装。然后依次运行 `npx -y bosscoding@latest init` 和 `npm install`，完整阅读根目录的 `AGENTS.md` 和已安装的 BossCoding 技能，再运行 `npm run preflight` 与 `npx boss status`，确认规则和本地防手滑已经生效。除非需要我花钱、授权、删除数据或对外发布，其余步骤都由你完成。最后只问我：「你想做个什么？」
+请把当前打开的空文件夹作为我的新产品项目。先确认这里确实没有私人文件，再检查版本记录工具 Git 和运行工具 Node.js 是否可用；缺什么就用大白话告诉我，并尽力替我安装。然后依次运行 `npx -y bosscoding@latest init` 和 `npm install`，完整阅读根目录的 `AGENTS.md` 和已安装的 BossCoding 技能，再运行 `npm run preflight` 与 `npx bosscoding status`，确认规则和本地防手滑已经生效。除非需要我花钱、授权、删除数据或对外发布，其余步骤都由你完成。最后只问我：「你想做个什么？」
 ```
 
 接下来只管说想法。第一版会先在你的电脑上跑起来；在你亲眼看到并验收之前，AI 不会催你注册 GitHub 或购买服务器。
@@ -62,11 +62,11 @@ npm install
 |---|---|
 | `AGENTS.md` | 老板定下的唯一规则：AI 怎么干活、怎么汇报、什么事必须先问 |
 | `CLAUDE.md` | 让 Claude Code 读取同一份规则，不另建一套 |
-| `npx boss status` | 只读状态盘：现在在哪一阶、环境齐不齐、AI 下一步该做什么 |
-| `npx boss check` | 一组基础检查：保护密钥、规则、文档和自动检查配置；它不冒充产品功能测试 |
-| `npx boss task <任务名>` | 为并行任务准备互不干扰的工作区 |
+| `npx bosscoding status` | 只读状态盘：现在在哪一阶、环境齐不齐、AI 下一步该做什么 |
+| `npx bosscoding check` | 一组基础检查：保护密钥、规则、文档和自动检查配置；它不冒充产品功能测试 |
+| `npx bosscoding task <任务名>` | 为并行任务准备互不干扰的工作区 |
 | `npx bosscoding finish` | 本地收尾：先自检，再从任务工作区安全合回稳定版本；不自动删除任何东西 |
-| `npx boss merge` | 连上 GitHub 后判断现在是否轮到这项改动合并 |
+| `npx bosscoding merge` | 连上 GitHub 后判断现在是否轮到这项改动合并 |
 | `.github/workflows/bosscoding.yml` | GitHub 上的自动检查：改动正式送检时运行并显示结果 |
 | `docs/decisions/` | 重要产品裁决的档案室：记下结论和原因，只追加、不篡改历史 |
 | 三个本地保护脚本 | 防止并行任务互相踩踏，并阻止 AI 手滑直推稳定版本 |

@@ -505,6 +505,80 @@ test("update：恢复缺失的官方 CI 与决策模板，并按真实 master �
   assert.match(captured.output, /恢复缺失的官方文件/);
 });
 
+test("update：失效 origin/HEAD 回退真实 main，并记住稳定分支", () => {
+  const dir = tmpProject();
+  initGit(dir);
+  fs.writeFileSync(path.join(dir, "package.json"), packageBody());
+  fs.writeFileSync(path.join(dir, "seed.txt"), "seed\n");
+  spawnSync("git", ["add", "-A"], { cwd: dir });
+  spawnSync(
+    "git",
+    [
+      "-c",
+      "user.name=boss",
+      "-c",
+      "user.email=boss@example.com",
+      "commit",
+      "-qm",
+      "init",
+    ],
+    { cwd: dir },
+  );
+  spawnSync(
+    "git",
+    ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/missing"],
+    { cwd: dir },
+  );
+
+  const captured = captureConsole(() => runUpdate(dir, { refreshOnly: true }));
+  assert.equal(captured.result, 0, captured.output);
+  assert.match(
+    fs.readFileSync(path.join(dir, ".github/workflows/bosscoding.yml"), "utf8"),
+    /branches: \["main"\]/,
+  );
+  assert.equal(
+    spawnSync("git", ["config", "--local", "--get", "bosscoding.stableBranch"], {
+      cwd: dir,
+      encoding: "utf8",
+    }).stdout.trim(),
+    "main",
+  );
+});
+
+test("update：多个自定义分支且没有可信默认分支时不改 package 或 CI", () => {
+  const dir = tmpProject();
+  const initialized = spawnSync("git", ["init", "-b", "develop"], {
+    cwd: dir,
+    encoding: "utf8",
+  });
+  assert.equal(initialized.status, 0, initialized.stderr);
+  const pkg = packageBody();
+  fs.writeFileSync(path.join(dir, "package.json"), pkg);
+  fs.writeFileSync(path.join(dir, "seed.txt"), "seed\n");
+  spawnSync("git", ["add", "-A"], { cwd: dir });
+  spawnSync(
+    "git",
+    [
+      "-c",
+      "user.name=boss",
+      "-c",
+      "user.email=boss@example.com",
+      "commit",
+      "-qm",
+      "init",
+    ],
+    { cwd: dir },
+  );
+  spawnSync("git", ["branch", "release"], { cwd: dir });
+
+  const captured = captureConsole(() => runUpdate(dir, { refreshOnly: true }));
+  assert.equal(captured.result, 1);
+  assert.match(captured.output, /找不到唯一的稳定分支/);
+  assert.doesNotMatch(captured.output, /\n\s+at |Error:/);
+  assert.equal(fs.readFileSync(path.join(dir, "package.json"), "utf8"), pkg);
+  assert.equal(fs.existsSync(path.join(dir, ".github")), false);
+});
+
 test("update：Git hook 路径探测失败时返回未完成，绝不宣称最新", () => {
   const dir = tmpProject();
   initGit(dir);

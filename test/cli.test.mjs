@@ -12,6 +12,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const CLI = fileURLToPath(new URL("../bin/bosscoding.mjs", import.meta.url));
+const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const GIT_ENV = {
   ...process.env,
   NO_COLOR: "1",
@@ -90,4 +91,48 @@ test("CLI：未知命令明确说不认识，并列出真实命令", () => {
   assert.equal(result.status, 1);
   assert.match(result.stderr, /不认识命令「statuz」/);
   assert.match(result.stdout, /bosscoding status/);
+});
+
+test("CLI：意外文件错误也只给人话，不把程序堆栈丢给老板", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-cli-error-"));
+  git(dir, "init", "-q", "-b", "main");
+  fs.mkdirSync(path.join(dir, "AGENTS.md"));
+
+  const result = spawnSync(process.execPath, [CLI, "status"], {
+    cwd: dir,
+    encoding: "utf8",
+    env: GIT_ENV,
+  });
+  const output = `${result.stdout}${result.stderr}`;
+
+  assert.equal(result.status, 1);
+  assert.match(output, /遇到意外问题/);
+  assert.match(output, /把这句话交给 AI/);
+  assert.doesNotMatch(output, /EISDIR|node:fs|\n\s+at /);
+});
+
+test("用户可见入口只展示唯一全名，不再诱导 npx 下载第三方 boss 包", () => {
+  const roots = [
+    path.join(ROOT, "README.md"),
+    path.join(ROOT, "AGENTS.md"),
+    path.join(ROOT, "bin"),
+    path.join(ROOT, "templates"),
+    path.join(ROOT, "lib", "commands"),
+    path.join(ROOT, "lib", "guards"),
+  ];
+  const files = [];
+  const walk = (target) => {
+    const stat = fs.statSync(target);
+    if (stat.isFile()) {
+      files.push(target);
+      return;
+    }
+    for (const entry of fs.readdirSync(target)) walk(path.join(target, entry));
+  };
+  for (const target of roots) walk(target);
+
+  for (const file of files) {
+    const body = fs.readFileSync(file, "utf8");
+    assert.doesNotMatch(body, /\bnpx boss\b/, path.relative(ROOT, file));
+  }
 });

@@ -9,8 +9,8 @@
  *   update  刷新框架管理的文件（老板的规则永不被碰）
  *   merge   排队判定：现在轮不轮得到我合并（只读，不替你合）
  *
- * 命令名有两个：安装场景必须用全名 `npx bosscoding`（项目外裸跑短名会解析到
- * npm 上别人的同名包）；装进项目后日常用短名 `npx boss`（本地命令优先）。
+ * 用户可复制的命令只写唯一全名 `bosscoding`；短名与 npm 上的第三方包重名，
+ * 依赖没装好时可能执行错包，所以只保留为旧项目兼容入口，不再展示。
  */
 
 import fs from "node:fs";
@@ -31,7 +31,7 @@ const HELP = `BossCoding——你是老板：需求你说，AI 干活，制度�
 你不必记命令。装好后只需对 AI 说：
 「读一遍 AGENTS.md。之后我说需求，你负责做到能让我直接验收。」
 
-项目已经安装 BossCoding 时，短名 npx boss 也能用。
+始终使用全名 bosscoding，避免误执行 npm 上的同名第三方包。
 `;
 
 async function main() {
@@ -107,4 +107,10 @@ async function main() {
   return cmd === undefined || cmd === "--help" || cmd === "-h" ? 0 : 1;
 }
 
-process.exit(await main());
+try {
+  process.exit(await main());
+} catch {
+  console.error("✗ BossCoding 遇到意外问题，本次没有完成。");
+  console.error("  把这句话交给 AI：「检查当前项目状态和文件权限，找出 BossCoding 命令失败的原因，修好后重试；不要把原始报错丢给我。」");
+  process.exit(1);
+}

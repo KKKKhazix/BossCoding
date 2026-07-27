@@ -210,32 +210,200 @@ test("回收：刚创建的不算完成；已合并但工作区仍有未提交�
   }
 });
 
-test("防呆：不是 git 仓库、还没有首个提交，各自给修法", () => {
-  const unmute = mute();
-  try {
-    const notRepo = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-task-norepo-"));
-    assert.equal(runTask(notRepo, "x"), 1);
+test("防呆：不是 git 仓库、还没有首个提交，只交给 AI 安全处理，不教一把收走所有文件", () => {
+  const notRepo = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-task-norepo-"));
+  const first = capture(() => runTask(notRepo, "x"));
+  assert.equal(first.result, 1);
+  assert.match(first.output, /排除私人文件和密钥/);
+  assert.doesNotMatch(first.output, /git init|git add -A/);
 
-    const empty = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-task-empty-"));
-    git(empty, "init", "-q", "-b", "main");
-    assert.equal(runTask(empty, "x"), 1);
-  } finally {
-    unmute();
-  }
+  const empty = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-task-empty-"));
+  git(empty, "init", "-q", "-b", "main");
+  const second = capture(() => runTask(empty, "x"));
+  assert.equal(second.result, 1);
+  assert.match(second.output, /哪些文件属于产品/);
+  assert.doesNotMatch(second.output, /git init|git add -A/);
 });
 
-test("防呆：只有 feature 分支、找不到统一稳定分支时拒绝，不再从 HEAD 开工", () => {
+test("自定义稳定分支：唯一非任务分支 develop 可直接开工", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-task-no-base-"));
-  git(dir, "init", "-q", "-b", "feature");
+  git(dir, "init", "-q", "-b", "develop");
   fs.writeFileSync(path.join(dir, "seed.txt"), "seed\n");
   git(dir, "add", "-A");
   git(dir, "commit", "-qm", "init");
+
+  const target = path.join(path.dirname(dir), `${path.basename(dir)}-可以创建`);
+  const result = capture(() => runTask(dir, "可以创建", { installDeps: false }));
+  assert.equal(result.result, 0);
+  assert.equal(git(target, "merge-base", "develop", "lane/可以创建"), git(dir, "rev-parse", "develop"));
+  execFileSync("git", ["worktree", "remove", "--force", target], {
+    cwd: dir,
+    env: GIT_ENV,
+    stdio: "pipe",
+  });
+});
+
+test("防呆：多个自定义候选且没有统一稳定分支时拒绝，不从当前分支猜", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bosscoding-task-no-base-"));
+  git(dir, "init", "-q", "-b", "develop");
+  fs.writeFileSync(path.join(dir, "seed.txt"), "seed\n");
+  git(dir, "add", "-A");
+  git(dir, "commit", "-qm", "init");
+  git(dir, "branch", "release");
 
   const result = capture(() => runTask(dir, "不该创建", { installDeps: false }));
   assert.equal(result.result, 1);
   assert.match(result.output, /找不到统一的稳定分支/);
   assert.equal(git(dir, "branch", "--list", "lane/不该创建"), "");
   assert.equal(git(dir, "worktree", "list", "--porcelain").match(/^worktree /gm)?.length, 1);
+});
+
+test("防呆：整段需求不能变成长路径，失败时不泄露 git 原始报错", () => {
+  const dir = repo();
+  const result = capture(() => runTask(dir, "请帮我做一个非常完整的产品功能".repeat(30)));
+
+  assert.equal(result.result, 1);
+  assert.match(result.output, /一整段需求|20 字以内/);
+  assert.doesNotMatch(result.output, /fatal:|cannot lock|refs\/heads/);
+  assert.equal(git(dir, "branch", "--list", "lane/*"), "");
+  assert.equal(git(dir, "worktree", "list", "--porcelain").match(/^worktree /gm)?.length, 1);
+});
+
+test("包管理器：开任务沿用 npm／pnpm／Yarn／Bun，绝不偷换工具", () => {
+  const cases = [
+    ["npm", "npm@10.0.0", "package-lock.json", "ci", null],
+    ["pnpm", "pnpm@9.0.0", "pnpm-lock.yaml", "install", "--frozen-lockfile"],
+    ["yarn", "yarn@4.0.0", "yarn.lock", "install", "--immutable"],
+    ["bun", "bun@1.1.0", "bun.lock", "install", "--frozen-lockfile"],
+  ];
+
+  for (const [manager, declaration, lock, action, flag] of cases) {
+    const dir = repo(`bosscoding-task-${manager}-`);
+    const pkg = {
+      name: `${manager}-project`,
+      private: true,
+      packageManager: declaration,
+      dependencies: { example: "1.0.0" },
+    };
+    fs.writeFileSync(path.join(dir, "package.json"), `${JSON.stringify(pkg)}\n`);
+    fs.writeFileSync(path.join(dir, lock), "{}\n");
+    if (manager === "yarn") {
+      fs.writeFileSync(path.join(dir, ".gitignore"), ".pnp.cjs\n");
+      fs.writeFileSync(path.join(dir, ".pnp.cjs"), "module.exports = {};\n");
+    }
+    git(dir, "add", "-A");
+    git(dir, "commit", "-qm", `${manager} setup`);
+
+    const calls = [];
+    const target = path.join(path.dirname(dir), `${path.basename(dir)}-依赖`);
+    try {
+      const result = capture(() =>
+        runTask(dir, "依赖", {
+          installRunner: (command, args, options) => {
+            calls.push({ command, args, cwd: options.cwd });
+            return "";
+          },
+        }),
+      );
+      assert.equal(result.result, 0, `${manager}: ${result.output}`);
+      assert.equal(calls.length, 1, manager);
+      assert.equal(calls[0].command, manager);
+      assert.equal(calls[0].args[0], action);
+      if (flag) assert.ok(calls[0].args.includes(flag), manager);
+      assert.doesNotMatch(JSON.stringify(calls), manager === "npm" ? /"pnpm"|"yarn"|"bun"/ : /"npm"/);
+    } finally {
+      if (fs.existsSync(target)) {
+        execFileSync("git", ["worktree", "remove", "--force", target], {
+          cwd: dir,
+          env: GIT_ENV,
+          stdio: "pipe",
+        });
+      }
+    }
+  }
+});
+
+test("包管理器：冲突时零写入；原工具安装失败时保留任务并明确未完成", () => {
+  const conflict = repo("bosscoding-task-conflict-");
+  fs.writeFileSync(
+    path.join(conflict, "package.json"),
+    '{"name":"conflict","private":true,"packageManager":"pnpm@9.0.0","dependencies":{"x":"1"}}\n',
+  );
+  fs.writeFileSync(path.join(conflict, "pnpm-lock.yaml"), "lock\n");
+  fs.writeFileSync(path.join(conflict, "yarn.lock"), "lock\n");
+  git(conflict, "add", "-A");
+  git(conflict, "commit", "-qm", "conflict");
+  const blocked = capture(() => runTask(conflict, "冲突"));
+  assert.equal(blocked.result, 1);
+  assert.match(blocked.output, /多套安装工具/);
+  assert.equal(git(conflict, "branch", "--list", "lane/冲突"), "");
+  assert.equal(git(conflict, "worktree", "list", "--porcelain").match(/^worktree /gm)?.length, 1);
+
+  const failed = repo("bosscoding-task-pnpm-fail-");
+  fs.writeFileSync(
+    path.join(failed, "package.json"),
+    '{"name":"pnpm-fail","private":true,"packageManager":"pnpm@9.0.0","dependencies":{"x":"1"}}\n',
+  );
+  fs.writeFileSync(path.join(failed, "pnpm-lock.yaml"), "lock\n");
+  git(failed, "add", "-A");
+  git(failed, "commit", "-qm", "pnpm");
+  const target = path.join(path.dirname(failed), `${path.basename(failed)}-失败`);
+  try {
+    const result = capture(() =>
+      runTask(failed, "失败", {
+        installRunner: () => {
+          const error = new Error("missing");
+          error.code = "ENOENT";
+          throw error;
+        },
+      }),
+    );
+    assert.equal(result.result, 1);
+    assert.match(result.output, /pnpm 依赖没装成|任务文件和分支已安全保留/);
+    assert.doesNotMatch(result.output, /npm install|网络？/);
+    assert.ok(fs.existsSync(target));
+  } finally {
+    if (fs.existsSync(target)) {
+      execFileSync("git", ["worktree", "remove", "--force", target], {
+        cwd: failed,
+        env: GIT_ENV,
+        stdio: "pipe",
+      });
+    }
+  }
+});
+
+test("包管理器：项目尚无锁文件时沿用原工具普通安装，不误加冻结参数", () => {
+  const dir = repo("bosscoding-task-pnpm-no-lock-");
+  fs.writeFileSync(
+    path.join(dir, "package.json"),
+    '{"name":"pnpm-no-lock","private":true,"packageManager":"pnpm@9.0.0","dependencies":{"x":"1"}}\n',
+  );
+  git(dir, "add", "-A");
+  git(dir, "commit", "-qm", "pnpm without lock");
+  const target = path.join(path.dirname(dir), `${path.basename(dir)}-无锁`);
+  const calls = [];
+  try {
+    const result = capture(() =>
+      runTask(dir, "无锁", {
+        installRunner: (command, args) => {
+          calls.push({ command, args });
+          return "";
+        },
+      }),
+    );
+    assert.equal(result.result, 0, result.output);
+    assert.deepEqual(calls, [{ command: "pnpm", args: ["install"] }]);
+    assert.match(result.output, /若新生成了一份/);
+  } finally {
+    if (fs.existsSync(target)) {
+      execFileSync("git", ["worktree", "remove", "--force", target], {
+        cwd: dir,
+        env: GIT_ENV,
+        stdio: "pipe",
+      });
+    }
+  }
 });
 
 test("防呆：稳定分支存在但没有自己的工作区时，也不从任务工作区继续分叉", () => {
